@@ -11,6 +11,9 @@ fn main() -> Result<()> {
     if args.len() >= 3 && args[1] == "parse-fixture" {
         return run_parse_fixture(&args[2]);
     }
+    if args.len() >= 3 && args[1] == "generate-wal-fixture" {
+        return run_generate_fixture(&args[2]);
+    }
 
     let adapter = SqliteAdapter::new("./data/titan.db")?;
     let replicator = WalReplicator::new();
@@ -18,8 +21,15 @@ fn main() -> Result<()> {
     tracing::info!("titan-node bootstrapped");
     tracing::info!("db_path = {}", adapter.db_path());
     tracing::info!("wal replicator initialized: {}", replicator.name());
+    tracing::info!("try: titan-node generate-wal-fixture <out.wal>");
     tracing::info!("try: titan-node parse-fixture <path-to-fixture>");
 
+    Ok(())
+}
+
+fn run_generate_fixture(output: &str) -> Result<()> {
+    SqliteAdapter::generate_wal_fixture(output)?;
+    tracing::info!("Generated WAL fixture at {}", output);
     Ok(())
 }
 

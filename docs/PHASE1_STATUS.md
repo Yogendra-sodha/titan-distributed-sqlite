@@ -25,11 +25,14 @@ No hard blocker right now.
   - WAL header parsing
   - frame header parsing
   - basic size/salt validation
-- Added `titan-node` CLI mode:
+- Added `titan-node` CLI modes:
   - `parse-fixture <path>` for fixture parsing/replay harness.
+  - `generate-wal-fixture <path>` to create realistic WAL fixtures from SQLite writes.
+- Implemented `SqliteAdapter::generate_wal_fixture()` and test coverage.
+- Began Phase-2 bootstrap in `raft-core` with role transitions, local log append, and baseline tests.
 
 ## Next immediate steps
-1. Replace synthetic WAL construction with real captured WAL fixture files.
-2. Add checksum rolling validation according to SQLite WAL spec.
-3. Start Phase-2 Raft integration in `raft-core`.
-4. Add a local 3-node docker-compose skeleton for upcoming Raft tests.
+1. Add strict rolling checksum validation according to SQLite WAL spec.
+2. Add replay/validation integration test using generated real WAL fixture in CI path.
+3. Expand `raft-core` with persistent state interface (term/vote/log store abstraction).
+4. Add local 3-node docker-compose skeleton for upcoming Raft integration tests.
