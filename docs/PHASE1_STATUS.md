@@ -10,15 +10,21 @@
   - `snapshotter`
   - `rpc-api`
   - `observability`
-- Defined initial interfaces for controlled write/read path and WAL frame metadata parsing.
+- Implemented `sqlite-adapter` with `rusqlite` and basic write/read APIs.
+- Added unit test for create/write/read flow in `sqlite-adapter`.
+- Implemented Phase-1 WAL batch parser harness in `wal-replicator`.
+- Added parser unit tests and integration fixture (`tests/integration/wal_batch_fixture.txt`).
 
-## Blocker
-Rust toolchain is not installed (command `cargo` not found), so build/test could not be executed yet.
+## Current Blocker
+Build fails because MSVC linker is missing on Windows (`link.exe` not found).
+
+You need Visual C++ Build Tools installed.
 
 ## Next immediate steps
-1. Install Rust (`rustup`) and verify `cargo --version`.
-2. Run:
-   - `cargo check`
+1. Install Visual Studio Build Tools with C++ workload:
+   - `winget install Microsoft.VisualStudio.2022.BuildTools`
+   - include **Desktop development with C++** workload.
+2. Open a new terminal and run:
    - `cargo test`
-3. Implement first runnable WAL replay fixture test in `wal-replicator`.
-4. Add `rusqlite` integration for `sqlite-adapter` controlled write path.
+3. Implement real SQLite WAL byte-level parsing (replace text harness parser).
+4. Start Phase-2 Raft integration in `raft-core`.
