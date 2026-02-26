@@ -52,7 +52,9 @@ mod tests {
 
     fn temp_db() -> String {
         let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
-        format!("./target/test-{}.db", ts)
+        let mut p = std::env::temp_dir();
+        p.push(format!("titan-test-{}.db", ts));
+        p.to_string_lossy().to_string()
     }
 
     #[test]
