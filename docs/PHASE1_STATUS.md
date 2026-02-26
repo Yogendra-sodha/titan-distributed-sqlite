@@ -16,15 +16,20 @@
 - Added parser unit tests and integration fixture (`tests/integration/wal_batch_fixture.txt`).
 
 ## Current Blocker
-Build fails because MSVC linker is missing on Windows (`link.exe` not found).
+No hard blocker right now.
 
-You need Visual C++ Build Tools installed.
+## Newly Completed
+- Rust build/test toolchain validated under VS Build Tools environment.
+- `cargo test` passes across workspace.
+- Added binary SQLite WAL parser scaffold:
+  - WAL header parsing
+  - frame header parsing
+  - basic size/salt validation
+- Added `titan-node` CLI mode:
+  - `parse-fixture <path>` for fixture parsing/replay harness.
 
 ## Next immediate steps
-1. Install Visual Studio Build Tools with C++ workload:
-   - `winget install Microsoft.VisualStudio.2022.BuildTools`
-   - include **Desktop development with C++** workload.
-2. Open a new terminal and run:
-   - `cargo test`
-3. Implement real SQLite WAL byte-level parsing (replace text harness parser).
-4. Start Phase-2 Raft integration in `raft-core`.
+1. Replace synthetic WAL construction with real captured WAL fixture files.
+2. Add checksum rolling validation according to SQLite WAL spec.
+3. Start Phase-2 Raft integration in `raft-core`.
+4. Add a local 3-node docker-compose skeleton for upcoming Raft tests.
