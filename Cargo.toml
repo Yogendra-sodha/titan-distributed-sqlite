@@ -1,0 +1,24 @@
+[workspace]
+members = [
+  "cmd/titan-node",
+  "crates/sqlite-adapter",
+  "crates/wal-replicator",
+  "crates/raft-core",
+  "crates/snapshotter",
+  "crates/rpc-api",
+  "crates/observability",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+authors = ["Titan Contributors"]
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
