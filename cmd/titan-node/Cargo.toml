@@ -1,0 +1,11 @@
+[package]
+name = "titan-node"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+sqlite-adapter = { path = "../../crates/sqlite-adapter" }
+wal-replicator = { path = "../../crates/wal-replicator" }
