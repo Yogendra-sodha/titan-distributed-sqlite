@@ -1,5 +1,8 @@
 use std::time::{Duration, Instant};
 
+pub mod store;
+use store::RaftStateStore;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RaftNodeId(pub u64);
 
@@ -71,6 +74,23 @@ impl RaftBootstrap {
         index
     }
 
+    pub fn append_with_store<S: RaftStateStore>(&mut self, store: &mut S, payload: Vec<u8>) -> u64 {
+        let index = store.entries().last().map(|e| e.index + 1).unwrap_or(1);
+        let entry = LogEntry {
+            index,
+            term: self.current_term,
+            payload,
+        };
+        store.append_entry(entry.clone());
+        self.log.push(entry);
+        index
+    }
+
+    pub fn persist_term_vote<S: RaftStateStore>(&self, store: &mut S) {
+        store.set_current_term(self.current_term);
+        store.set_voted_for(self.voted_for);
+    }
+
     pub fn advance_commit(&mut self, index: u64) {
         if index > self.commit_index {
             self.commit_index = index;
@@ -81,6 +101,7 @@ impl RaftBootstrap {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::{InMemoryStateStore, RaftStateStore};
 
     #[test]
     fn bootstrap_defaults() {
@@ -107,5 +128,20 @@ mod tests {
         let i2 = r.append_local_entry(vec![2]);
         assert_eq!(i1, 1);
         assert_eq!(i2, 2);
+    }
+
+    #[test]
+    fn persist_and_append_with_store() {
+        let mut r = RaftBootstrap::new(RaftNodeId(9), Duration::from_millis(300));
+        let mut s = InMemoryStateStore::default();
+
+        r.become_candidate();
+        r.persist_term_vote(&mut s);
+        let idx = r.append_with_store(&mut s, vec![1, 2, 3]);
+
+        assert_eq!(idx, 1);
+        assert_eq!(s.current_term(), r.current_term);
+        assert_eq!(s.voted_for(), Some(RaftNodeId(9)));
+        assert_eq!(s.entries().len(), 1);
     }
 }

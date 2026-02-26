@@ -1,0 +1,32 @@
+version: "3.9"
+
+services:
+  titan-node-1:
+    image: rust:1.86
+    container_name: titan-node-1
+    working_dir: /app
+    volumes:
+      - ../../:/app
+    command: ["bash", "-lc", "echo titan-node-1 placeholder; sleep infinity"]
+    ports:
+      - "19001:19001"
+
+  titan-node-2:
+    image: rust:1.86
+    container_name: titan-node-2
+    working_dir: /app
+    volumes:
+      - ../../:/app
+    command: ["bash", "-lc", "echo titan-node-2 placeholder; sleep infinity"]
+    ports:
+      - "19002:19002"
+
+  titan-node-3:
+    image: rust:1.86
+    container_name: titan-node-3
+    working_dir: /app
+    volumes:
+      - ../../:/app
+    command: ["bash", "-lc", "echo titan-node-3 placeholder; sleep infinity"]
+    ports:
+      - "19003:19003"
