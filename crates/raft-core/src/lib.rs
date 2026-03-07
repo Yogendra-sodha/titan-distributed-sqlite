@@ -9,17 +9,19 @@ use rpc::{
     RequestVoteReply,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RaftNodeId(pub u64);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Role {
     Follower,
     Candidate,
     Leader,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogEntry {
     pub index: u64,
     pub term: u64,
