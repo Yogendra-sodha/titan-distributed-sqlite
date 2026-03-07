@@ -1,6 +1,7 @@
 use crate::{LogEntry, RaftNodeId};
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestVoteArgs {
     pub term: u64,
     pub candidate_id: RaftNodeId,
@@ -8,13 +9,13 @@ pub struct RequestVoteArgs {
     pub last_log_term: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestVoteReply {
     pub term: u64,
     pub vote_granted: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppendEntriesArgs {
     pub term: u64,
     pub leader_id: RaftNodeId,
@@ -24,14 +25,14 @@ pub struct AppendEntriesArgs {
     pub leader_commit: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppendEntriesReply {
     pub term: u64,
     pub success: bool,
     pub match_index: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstallSnapshotArgs {
     pub term: u64,
     pub leader_id: RaftNodeId,
@@ -40,12 +41,12 @@ pub struct InstallSnapshotArgs {
     pub data: Vec<u8>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstallSnapshotReply {
     pub term: u64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MessagePayload {
     RequestVote(RequestVoteArgs),
     RequestVoteReply(RequestVoteReply),
@@ -55,7 +56,7 @@ pub enum MessagePayload {
     InstallSnapshotReply(InstallSnapshotReply),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RaftMessage {
     pub from: RaftNodeId,
     pub to: RaftNodeId,
