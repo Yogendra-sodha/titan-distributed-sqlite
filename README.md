@@ -25,7 +25,7 @@ Titan is a local-first, fault-tolerant distributed SQLite system using a Raft-ba
 - `docs/architecture/FAILURE_MODES.md`
 
 ## Execution
-- `docs/ROADMAP_90_DAYS.md`
+- `docs/ROADMAP.md`
 - `docs/TICKETS_MVP.md`
 
 ## Planned Repo Layout
