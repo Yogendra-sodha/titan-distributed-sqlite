@@ -1,7 +1,13 @@
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+pub mod rpc;
 pub mod store;
-use store::RaftStateStore;
+
+use rpc::{
+    AppendEntriesArgs, AppendEntriesReply, MessagePayload, RaftMessage, RequestVoteArgs,
+    RequestVoteReply,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RaftNodeId(pub u64);
@@ -21,8 +27,9 @@ pub struct LogEntry {
 }
 
 #[derive(Debug)]
-pub struct RaftBootstrap {
+pub struct RaftNode {
     pub node_id: RaftNodeId,
+    pub peers: Vec<RaftNodeId>,
     pub current_term: u64,
     pub voted_for: Option<RaftNodeId>,
     pub commit_index: u64,
@@ -31,13 +38,24 @@ pub struct RaftBootstrap {
     pub election_timeout: Duration,
     pub election_deadline: Instant,
     pub log: Vec<LogEntry>,
+
+    // Leader state
+    pub next_index: HashMap<RaftNodeId, u64>,
+    pub match_index: HashMap<RaftNodeId, u64>,
+
+    // Candidate state
+    pub votes_received: usize,
+
+    // Outbox
+    pub outbox: Vec<RaftMessage>,
 }
 
-impl RaftBootstrap {
-    pub fn new(node_id: RaftNodeId, election_timeout: Duration) -> Self {
+impl RaftNode {
+    pub fn new(node_id: RaftNodeId, peers: Vec<RaftNodeId>, election_timeout: Duration) -> Self {
         let now = Instant::now();
         Self {
             node_id,
+            peers,
             current_term: 0,
             voted_for: None,
             commit_index: 0,
@@ -46,102 +64,442 @@ impl RaftBootstrap {
             election_timeout,
             election_deadline: now + election_timeout,
             log: Vec::new(),
+            next_index: HashMap::new(),
+            match_index: HashMap::new(),
+            votes_received: 0,
+            outbox: Vec::new(),
         }
     }
 
     pub fn reset_election_deadline(&mut self) {
+        // In a real system we'd add some random jitter to the timeout.
         self.election_deadline = Instant::now() + self.election_timeout;
+    }
+
+    pub fn become_follower(&mut self, term: u64) {
+        self.role = Role::Follower;
+        self.current_term = term;
+        self.voted_for = None;
+        self.reset_election_deadline();
     }
 
     pub fn become_candidate(&mut self) {
         self.current_term += 1;
         self.role = Role::Candidate;
         self.voted_for = Some(self.node_id);
+        self.votes_received = 1;
         self.reset_election_deadline();
+
+        let lli = self.log.last().map(|e| e.index).unwrap_or(0);
+        let llt = self.log.last().map(|e| e.term).unwrap_or(0);
+
+        let peers = self.peers.clone();
+        for peer in peers {
+            self.send_message(
+                peer,
+                MessagePayload::RequestVote(RequestVoteArgs {
+                    term: self.current_term,
+                    candidate_id: self.node_id,
+                    last_log_index: lli,
+                    last_log_term: llt,
+                }),
+            );
+        }
     }
 
     pub fn become_leader(&mut self) {
         self.role = Role::Leader;
+        let next_idx = self.log.last().map(|e| e.index + 1).unwrap_or(1);
+        for peer in &self.peers {
+            self.next_index.insert(*peer, next_idx);
+            self.match_index.insert(*peer, 0);
+        }
+        self.broadcast_append_entries();
     }
 
-    pub fn append_local_entry(&mut self, payload: Vec<u8>) -> u64 {
+    pub fn broadcast_append_entries(&mut self) {
+        for peer in self.peers.clone() {
+            self.send_append_entries(peer);
+        }
+    }
+
+    pub fn send_append_entries(&mut self, peer: RaftNodeId) {
+        let nidx = *self.next_index.get(&peer).unwrap_or(&1);
+        let prev_log_index = if nidx > 0 { nidx - 1 } else { 0 };
+        let prev_log_term = if prev_log_index > 0 && prev_log_index as usize <= self.log.len() {
+            self.log[prev_log_index as usize - 1].term
+        } else {
+            0
+        };
+
+        let entries = if nidx as usize <= self.log.len() {
+            self.log[(nidx as usize - 1)..].to_vec()
+        } else {
+            Vec::new()
+        };
+
+        self.send_message(
+            peer,
+            MessagePayload::AppendEntries(AppendEntriesArgs {
+                term: self.current_term,
+                leader_id: self.node_id,
+                prev_log_index,
+                prev_log_term,
+                entries,
+                leader_commit: self.commit_index,
+            }),
+        );
+    }
+
+    fn send_message(&mut self, to: RaftNodeId, payload: MessagePayload) {
+        self.outbox.push(RaftMessage {
+            from: self.node_id,
+            to,
+            payload,
+        });
+    }
+
+    pub fn tick(&mut self, now: Instant) {
+        if self.role != Role::Leader && now >= self.election_deadline {
+            self.become_candidate();
+        } else if self.role == Role::Leader {
+            // Heartbeat
+            self.broadcast_append_entries();
+        }
+    }
+
+    pub fn step(&mut self, msg: RaftMessage) {
+        // Update term if needed
+        let msg_term = match &msg.payload {
+            MessagePayload::RequestVote(args) => args.term,
+            MessagePayload::RequestVoteReply(reply) => reply.term,
+            MessagePayload::AppendEntries(args) => args.term,
+            MessagePayload::AppendEntriesReply(reply) => reply.term,
+            MessagePayload::InstallSnapshot(args) => args.term,
+            MessagePayload::InstallSnapshotReply(reply) => reply.term,
+        };
+
+        if msg_term > self.current_term {
+            self.become_follower(msg_term);
+        }
+
+        match msg.payload {
+            MessagePayload::RequestVote(args) => {
+                let current_term = self.current_term;
+                let mut vote_granted = false;
+
+                let lli = self.log.last().map(|e| e.index).unwrap_or(0);
+                let llt = self.log.last().map(|e| e.term).unwrap_or(0);
+
+                let log_ok = args.last_log_term > llt || (args.last_log_term == llt && args.last_log_index >= lli);
+
+                if args.term == current_term && (self.voted_for.is_none() || self.voted_for == Some(args.candidate_id)) && log_ok {
+                    vote_granted = true;
+                    self.voted_for = Some(args.candidate_id);
+                    self.reset_election_deadline();
+                }
+
+                self.send_message(
+                    msg.from,
+                    MessagePayload::RequestVoteReply(RequestVoteReply {
+                        term: current_term,
+                        vote_granted,
+                    }),
+                );
+            }
+            MessagePayload::RequestVoteReply(reply) => {
+                if self.role == Role::Candidate && reply.term == self.current_term && reply.vote_granted {
+                    self.votes_received += 1;
+                    if self.votes_received > (self.peers.len() + 1) / 2 {
+                        self.become_leader();
+                    }
+                }
+            }
+            MessagePayload::AppendEntries(args) => {
+                let mut success = false;
+                let mut match_index = 0;
+
+                if args.term == self.current_term {
+                    self.role = Role::Follower; // recognize leader
+                    self.reset_election_deadline();
+
+                    // Check prev log
+                    let prev_ok = args.prev_log_index == 0 || (
+                        args.prev_log_index as usize <= self.log.len() &&
+                        self.log[args.prev_log_index as usize - 1].term == args.prev_log_term
+                    );
+
+                    if prev_ok {
+                        success = true;
+                        
+                        // Append entries
+                        let mut insert_idx = args.prev_log_index as usize;
+                        for entry in args.entries {
+                            if insert_idx < self.log.len() {
+                                if self.log[insert_idx].term != entry.term {
+                                    self.log.truncate(insert_idx);
+                                    self.log.push(entry);
+                                }
+                            } else {
+                                self.log.push(entry);
+                            }
+                            insert_idx += 1;
+                        }
+                        
+                        match_index = args.prev_log_index + insert_idx as u64 - args.prev_log_index as u64;
+
+                        if args.leader_commit > self.commit_index {
+                            self.commit_index = std::cmp::min(args.leader_commit, self.log.last().map(|e| e.index).unwrap_or(0));
+                        }
+                    }
+                }
+
+                self.send_message(
+                    msg.from,
+                    MessagePayload::AppendEntriesReply(AppendEntriesReply {
+                        term: self.current_term,
+                        success,
+                        match_index,
+                    }),
+                );
+            }
+            MessagePayload::AppendEntriesReply(reply) => {
+                if self.role == Role::Leader && reply.term == self.current_term {
+                    if reply.success {
+                        self.match_index.insert(msg.from, reply.match_index);
+                        self.next_index.insert(msg.from, reply.match_index + 1);
+
+                        // Update commit index
+                        let mut matches: Vec<u64> = self.match_index.values().cloned().collect();
+                        matches.push(self.log.last().map(|e| e.index).unwrap_or(0)); // self
+                        matches.sort_unstable();
+                        
+                        let nci = matches[matches.len() - (self.peers.len() + 1) / 2];
+
+                        if nci > self.commit_index && nci as usize <= self.log.len() && self.log[nci as usize - 1].term == self.current_term {
+                            self.commit_index = nci;
+                        }
+                    } else {
+                        // decrement next_index and retry
+                        let nidx = self.next_index.get_mut(&msg.from).unwrap();
+                        if *nidx > 1 {
+                            *nidx -= 1;
+                            self.send_append_entries(msg.from);
+                        }
+                    }
+                }
+            }
+            MessagePayload::InstallSnapshot(_) => {
+                // Phase 4 stub
+            }
+            MessagePayload::InstallSnapshotReply(_) => {
+                // Phase 4 stub
+            }
+        }
+    }
+
+    pub fn append_local_entry(&mut self, payload: Vec<u8>) -> Option<u64> {
+        if self.role != Role::Leader {
+            return None;
+        }
+
         let index = self.log.last().map(|e| e.index + 1).unwrap_or(1);
         self.log.push(LogEntry {
             index,
             term: self.current_term,
             payload,
         });
-        index
+
+        self.broadcast_append_entries();
+        Some(index)
     }
 
-    pub fn append_with_store<S: RaftStateStore>(&mut self, store: &mut S, payload: Vec<u8>) -> u64 {
-        let index = store.entries().last().map(|e| e.index + 1).unwrap_or(1);
-        let entry = LogEntry {
-            index,
-            term: self.current_term,
-            payload,
-        };
-        store.append_entry(entry.clone());
-        self.log.push(entry);
-        index
+    pub fn take_outbox(&mut self) -> Vec<RaftMessage> {
+        std::mem::take(&mut self.outbox)
+    }
+}
+
+pub struct DeterministicApplyLoop {
+    pub last_applied: u64,
+}
+
+impl DeterministicApplyLoop {
+    pub fn new() -> Self {
+        Self { last_applied: 0 }
     }
 
-    pub fn persist_term_vote<S: RaftStateStore>(&self, store: &mut S) {
-        store.set_current_term(self.current_term);
-        store.set_voted_for(self.voted_for);
-    }
-
-    pub fn advance_commit(&mut self, index: u64) {
-        if index > self.commit_index {
-            self.commit_index = index;
+    pub fn apply(&mut self, node: &mut RaftNode) -> Vec<LogEntry> {
+        let mut applied = Vec::new();
+        while self.last_applied < node.commit_index {
+            self.last_applied += 1;
+            node.last_applied = self.last_applied;
+            let entry = node.log[self.last_applied as usize - 1].clone();
+            applied.push(entry);
         }
+        applied
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::{InMemoryStateStore, RaftStateStore};
+    use std::collections::VecDeque;
 
     #[test]
-    fn bootstrap_defaults() {
-        let r = RaftBootstrap::new(RaftNodeId(1), Duration::from_millis(300));
-        assert_eq!(r.current_term, 0);
+    fn single_node_bootstrap() {
+        let r = RaftNode::new(RaftNodeId(1), vec![], Duration::from_millis(300));
         assert_eq!(r.role, Role::Follower);
-        assert_eq!(r.commit_index, 0);
     }
 
     #[test]
-    fn candidate_transition_votes_for_self() {
-        let mut r = RaftBootstrap::new(RaftNodeId(7), Duration::from_millis(300));
-        r.become_candidate();
-        assert_eq!(r.current_term, 1);
-        assert_eq!(r.role, Role::Candidate);
-        assert_eq!(r.voted_for, Some(RaftNodeId(7)));
-    }
+    fn three_node_cluster_election_and_replicate() {
+        let mut n1 = RaftNode::new(RaftNodeId(1), vec![RaftNodeId(2), RaftNodeId(3)], Duration::from_millis(100));
+        let mut n2 = RaftNode::new(RaftNodeId(2), vec![RaftNodeId(1), RaftNodeId(3)], Duration::from_millis(150));
+        let mut n3 = RaftNode::new(RaftNodeId(3), vec![RaftNodeId(1), RaftNodeId(2)], Duration::from_millis(200));
 
-    #[test]
-    fn append_entry_increments_index() {
-        let mut r = RaftBootstrap::new(RaftNodeId(1), Duration::from_millis(300));
-        r.become_candidate();
-        let i1 = r.append_local_entry(vec![1]);
-        let i2 = r.append_local_entry(vec![2]);
-        assert_eq!(i1, 1);
-        assert_eq!(i2, 2);
-    }
+        // Node 1 times out first
+        n1.tick(Instant::now() + Duration::from_millis(110));
+        assert_eq!(n1.role, Role::Candidate);
 
-    #[test]
-    fn persist_and_append_with_store() {
-        let mut r = RaftBootstrap::new(RaftNodeId(9), Duration::from_millis(300));
-        let mut s = InMemoryStateStore::default();
+        let mut msgs = VecDeque::new();
+        msgs.extend(n1.take_outbox());
 
-        r.become_candidate();
-        r.persist_term_vote(&mut s);
-        let idx = r.append_with_store(&mut s, vec![1, 2, 3]);
+        let deliver = |msgs: &mut VecDeque<RaftMessage>, nodes: &mut [&mut RaftNode]| {
+            while let Some(msg) = msgs.pop_front() {
+                for node in nodes.iter_mut() {
+                    if node.node_id == msg.to {
+                        node.step(msg.clone());
+                        msgs.extend(node.take_outbox());
+                    }
+                }
+            }
+        };
 
+        deliver(&mut msgs, &mut [&mut n1, &mut n2, &mut n3]);
+
+        assert_eq!(n1.role, Role::Leader);
+        assert_eq!(n2.role, Role::Follower);
+        assert_eq!(n3.role, Role::Follower);
+        assert_eq!(n1.current_term, 1);
+
+        // Client appends an entry to Leader n1
+        let idx = n1.append_local_entry(b"SET x=1".to_vec()).unwrap();
         assert_eq!(idx, 1);
-        assert_eq!(s.current_term(), r.current_term);
-        assert_eq!(s.voted_for(), Some(RaftNodeId(9)));
-        assert_eq!(s.entries().len(), 1);
+
+        msgs.extend(n1.take_outbox());
+        deliver(&mut msgs, &mut [&mut n1, &mut n2, &mut n3]);
+
+        // Tick leader to send heartbeat and propagate the new commit_index
+        n1.tick(Instant::now());
+        msgs.extend(n1.take_outbox());
+        deliver(&mut msgs, &mut [&mut n1, &mut n2, &mut n3]);
+
+        assert_eq!(n1.commit_index, 1);
+        assert_eq!(n2.commit_index, 1);
+        assert_eq!(n3.commit_index, 1);
+
+        let mut applier = DeterministicApplyLoop::new();
+        let applied = applier.apply(&mut n2);
+        assert_eq!(applied.len(), 1);
+        assert_eq!(applied[0].payload, b"SET x=1");
+    }
+    #[test]
+    fn test_leader_failover_and_recovery() {
+        let mut n1 = RaftNode::new(RaftNodeId(1), vec![RaftNodeId(2), RaftNodeId(3)], Duration::from_millis(100));
+        let mut n2 = RaftNode::new(RaftNodeId(2), vec![RaftNodeId(1), RaftNodeId(3)], Duration::from_millis(150));
+        let mut n3 = RaftNode::new(RaftNodeId(3), vec![RaftNodeId(1), RaftNodeId(2)], Duration::from_millis(200));
+
+        // N1 becomes leader
+        n1.tick(Instant::now() + Duration::from_millis(110));
+        let mut msgs = VecDeque::new();
+        msgs.extend(n1.take_outbox());
+
+        let deliver = |msgs: &mut VecDeque<RaftMessage>, nodes: &mut [&mut RaftNode]| {
+            while let Some(msg) = msgs.pop_front() {
+                for node in nodes.iter_mut() {
+                    if node.node_id == msg.to {
+                        node.step(msg.clone());
+                        msgs.extend(node.take_outbox());
+                    }
+                }
+            }
+        };
+
+        deliver(&mut msgs, &mut [&mut n1, &mut n2, &mut n3]);
+        assert_eq!(n1.role, Role::Leader);
+        assert_eq!(n1.current_term, 1);
+
+        // Failover! Node 1 is killed. Node 2 times out.
+        n2.tick(Instant::now() + Duration::from_millis(300));
+        msgs.extend(n2.take_outbox());
+
+        // Deliver just between n2 and n3
+        deliver(&mut msgs, &mut [&mut n2, &mut n3]);
+
+        assert_eq!(n2.role, Role::Leader);
+        assert_eq!(n2.current_term, 2);
+
+        // Node 1 comes back up and ticks.
+        n1.tick(Instant::now() + Duration::from_millis(400));
+        msgs.extend(n1.take_outbox());
+        
+        // Let N2 heartbeat out so N1 sees N2 is leader
+        n2.tick(Instant::now());
+        msgs.extend(n2.take_outbox());
+        deliver(&mut msgs, &mut [&mut n1, &mut n2, &mut n3]);
+
+        assert_eq!(n1.role, Role::Follower);
+        assert_eq!(n1.current_term, 2);
+    }
+
+    #[test]
+    fn test_network_partition_chaos() {
+        let mut n1 = RaftNode::new(RaftNodeId(1), vec![RaftNodeId(2), RaftNodeId(3)], Duration::from_millis(100));
+        let mut n2 = RaftNode::new(RaftNodeId(2), vec![RaftNodeId(1), RaftNodeId(3)], Duration::from_millis(150));
+        let mut n3 = RaftNode::new(RaftNodeId(3), vec![RaftNodeId(1), RaftNodeId(2)], Duration::from_millis(200));
+
+        // Initial Leader N1
+        n1.tick(Instant::now() + Duration::from_millis(110));
+        let mut msgs = VecDeque::new();
+        msgs.extend(n1.take_outbox());
+
+        let deliver = |msgs: &mut VecDeque<RaftMessage>, nodes: &mut [&mut RaftNode]| {
+            while let Some(msg) = msgs.pop_front() {
+                for node in nodes.iter_mut() {
+                    if node.node_id == msg.to {
+                        node.step(msg.clone());
+                        msgs.extend(node.take_outbox());
+                    }
+                }
+            }
+        };
+
+        deliver(&mut msgs, &mut [&mut n1, &mut n2, &mut n3]);
+        assert_eq!(n1.role, Role::Leader);
+
+        // N1 is partitioned from N2 and N3
+        // So N2 times out and can't reach N1. N2 and N3 elect N2.
+        n2.tick(Instant::now() + Duration::from_millis(300));
+        msgs.extend(n2.take_outbox());
+        deliver(&mut msgs, &mut [&mut n2, &mut n3]);
+        
+        assert_eq!(n2.role, Role::Leader);
+        assert_eq!(n2.current_term, 2);
+
+        // N1 still thinks it's leader because no news arrived, but it can't commit.
+        n1.append_local_entry(b"lost".to_vec());
+        msgs.extend(n1.take_outbox());
+        // partition drops msgs
+        msgs.clear();
+
+        // Partition heals. N2 appends a new entry as the true leader.
+        n2.append_local_entry(b"found".to_vec());
+        msgs.extend(n2.take_outbox());
+        deliver(&mut msgs, &mut [&mut n1, &mut n2, &mut n3]);
+
+        assert_eq!(n1.role, Role::Follower);
+        // N1's log should have been truncated and overwritten by N2's entry
+        assert_eq!(n1.log.len(), 1);
+        assert_eq!(n1.log[0].payload, b"found");
     }
 }
