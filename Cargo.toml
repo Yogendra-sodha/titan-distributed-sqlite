@@ -6,7 +6,7 @@ members = [
   "crates/raft-core",
   "crates/snapshotter",
   "crates/rpc-api",
-  "crates/observability",
+  "crates/observability", "examples/embedded-app",
 ]
 resolver = "2"
 

@@ -1,0 +1,15 @@
+[package]
+name = "embedded-app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# This simulates how a user would pull Titan directly into their own Rust project!
+raft-core = { path = "../../crates/raft-core" }
+sqlite-adapter = { path = "../../crates/sqlite-adapter" }
+
+# Standard dependencies
+tokio = { version = "1", features = ["full"] }
+axum = "0.7.3"
+serde = { version = "1", features = ["derive"] }
+tracing = "0.1.40"
