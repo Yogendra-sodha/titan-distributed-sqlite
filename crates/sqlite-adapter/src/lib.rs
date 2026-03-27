@@ -28,22 +28,44 @@ impl SqliteAdapter {
     }
 
     pub fn execute_read(&self, sql: &str) -> Result<Vec<Vec<String>>> {
+        let (_cols, rows) = self.execute_read_with_columns(sql)?;
+        Ok(rows)
+    }
+
+    pub fn execute_read_with_columns(&self, sql: &str) -> Result<(Vec<String>, Vec<Vec<String>>)> {
         let conn = Connection::open(&self.db_path)?;
         let mut stmt = conn.prepare(sql)?;
         let col_count = stmt.column_count();
-        let mut rows = stmt.query([])?;
+
+        // Get column names
+        let columns: Vec<String> = (0..col_count)
+            .map(|i| stmt.column_name(i).unwrap_or("?").to_string())
+            .collect();
+
+        let mut rows_out = stmt.query([])?;
         let mut out = Vec::new();
 
-        while let Some(row) = rows.next()? {
+        while let Some(row) = rows_out.next()? {
             let mut vals = Vec::with_capacity(col_count);
             for i in 0..col_count {
-                let val: std::result::Result<String, _> = row.get(i);
-                vals.push(val.unwrap_or_default());
+                let val_str = match row.get_ref(i) {
+                    Ok(rusqlite::types::ValueRef::Null) => "NULL".to_string(),
+                    Ok(rusqlite::types::ValueRef::Integer(n)) => n.to_string(),
+                    Ok(rusqlite::types::ValueRef::Real(f)) => f.to_string(),
+                    Ok(rusqlite::types::ValueRef::Text(t)) => {
+                        String::from_utf8_lossy(t).to_string()
+                    }
+                    Ok(rusqlite::types::ValueRef::Blob(b)) => {
+                        format!("<blob {} bytes>", b.len())
+                    }
+                    Err(_) => "ERROR".to_string(),
+                };
+                vals.push(val_str);
             }
             out.push(vals);
         }
 
-        Ok(out)
+        Ok((columns, out))
     }
 
     /// Generate a realistic SQLite WAL fixture by creating writes in WAL mode

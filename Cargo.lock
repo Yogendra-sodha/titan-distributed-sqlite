@@ -733,10 +733,12 @@ name = "titan-node"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "raft-core",
  "serde",
  "serde_json",
  "sqlite-adapter",
+ "tokio",
  "tracing",
  "tracing-subscriber",
  "wal-replicator",

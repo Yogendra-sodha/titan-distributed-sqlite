@@ -12,3 +12,5 @@ serde_json = { workspace = true }
 sqlite-adapter = { path = "../../crates/sqlite-adapter" }
 wal-replicator = { path = "../../crates/wal-replicator" }
 raft-core = { path = "../../crates/raft-core" }
+tokio = { version = "1", features = ["full"] }
+axum = "0.7"
