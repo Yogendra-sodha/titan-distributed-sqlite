@@ -1,9 +1,12 @@
 use anyhow::Result;
 use axum::{
     extract::{Query, State},
+    http::{HeaderValue, Method},
+    response::Html,
     routing::{get, post},
     Json, Router,
 };
+use tower::ServiceBuilder;
 use raft_core::{rpc::RaftMessage, RaftNode, RaftNodeId, Role};
 use serde::{Deserialize, Serialize};
 use sqlite_adapter::SqliteAdapter;
@@ -144,10 +147,18 @@ fn run_server(id: u64, peers: Vec<RaftNodeId>) -> Result<()> {
     // ── Run the HTTP API on the main thread with tokio ──
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
+        // CORS layer so the dashboard on :8001 can call APIs on :8002, :8003
+        let cors = tower_http::cors::CorsLayer::new()
+            .allow_origin(tower_http::cors::Any)
+            .allow_methods([Method::GET, Method::POST])
+            .allow_headers([axum::http::header::CONTENT_TYPE]);
+
         let app = Router::new()
+            .route("/", get(handle_dashboard))
             .route("/execute", post(handle_execute))
             .route("/query", get(handle_query))
             .route("/status", get(handle_status))
+            .layer(cors)
             .with_state(Arc::clone(&shared));
 
         let listener = TcpListener::bind(format!("0.0.0.0:{}", http_port))
@@ -242,6 +253,10 @@ fn run_raft_loop(id: u64, shared: Arc<SharedState>) {
 }
 
 // ── HTTP Handlers ──
+
+async fn handle_dashboard() -> Html<&'static str> {
+    Html(include_str!("../static/index.html"))
+}
 
 async fn handle_execute(
     State(shared): State<Arc<SharedState>>,

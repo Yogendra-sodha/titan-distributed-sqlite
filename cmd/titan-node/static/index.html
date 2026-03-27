@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Titan — Distributed SQLite Dashboard</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0e17;
+            --bg-secondary: #111827;
+            --bg-card: #1a2332;
+            --bg-card-hover: #1f2b3d;
+            --border: #2a3a4d;
+            --text-primary: #e2e8f0;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent-blue: #3b82f6;
+            --accent-cyan: #06b6d4;
+            --accent-green: #10b981;
+            --accent-amber: #f59e0b;
+            --accent-red: #ef4444;
+            --accent-purple: #8b5cf6;
+            --glow-blue: rgba(59, 130, 246, 0.15);
+            --glow-green: rgba(16, 185, 129, 0.15);
+            --glow-amber: rgba(245, 158, 11, 0.15);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        /* ── Header ── */
+        .header {
+            background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
+            border-bottom: 1px solid var(--border);
+            padding: 1.25rem 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.5px;
+        }
+
+        .logo-sub {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            font-weight: 400;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .cluster-badge {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.375rem 0.75rem;
+            background: var(--glow-green);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 999px;
+            font-size: 0.8rem;
+            color: var(--accent-green);
+        }
+
+        .pulse-dot {
+            width: 8px; height: 8px;
+            background: var(--accent-green);
+            border-radius: 50%;
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(0.8); }
+        }
+
+        /* ── Main Layout ── */
+        .main {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 1.5rem 2rem;
+        }
+
+        /* ── Node Cards ── */
+        .nodes-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .node-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.25rem;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .node-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: var(--border);
+            transition: background 0.3s ease;
+        }
+
+        .node-card.leader::before { background: linear-gradient(90deg, var(--accent-amber), var(--accent-green)); }
+        .node-card.follower::before { background: linear-gradient(90deg, var(--accent-blue), var(--accent-cyan)); }
+        .node-card.candidate::before { background: linear-gradient(90deg, var(--accent-purple), var(--accent-blue)); }
+        .node-card.offline::before { background: var(--accent-red); }
+
+        .node-card:hover {
+            border-color: var(--accent-blue);
+            background: var(--bg-card-hover);
+            transform: translateY(-2px);
+        }
+
+        .node-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1rem;
+        }
+
+        .node-title {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .node-name {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .role-badge {
+            padding: 0.2rem 0.6rem;
+            border-radius: 6px;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .role-badge.leader { background: var(--glow-amber); color: var(--accent-amber); border: 1px solid rgba(245, 158, 11, 0.3); }
+        .role-badge.follower { background: var(--glow-blue); color: var(--accent-blue); border: 1px solid rgba(59, 130, 246, 0.3); }
+        .role-badge.candidate { background: rgba(139, 92, 246, 0.15); color: var(--accent-purple); border: 1px solid rgba(139, 92, 246, 0.3); }
+        .role-badge.offline { background: rgba(239, 68, 68, 0.15); color: var(--accent-red); border: 1px solid rgba(239, 68, 68, 0.3); }
+
+        .node-stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.75rem;
+        }
+
+        .stat {
+            display: flex;
+            flex-direction: column;
+            gap: 0.15rem;
+        }
+
+        .stat-label {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .stat-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1.1rem;
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .node-ports {
+            margin-top: 0.75rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid var(--border);
+            display: flex;
+            gap: 1rem;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* ── SQL Console ── */
+        .console-section {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.25rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .console-title {
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .console-row {
+            display: flex;
+            gap: 0.75rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .sql-input {
+            flex: 1;
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.625rem 1rem;
+            color: var(--text-primary);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .sql-input:focus { border-color: var(--accent-blue); }
+        .sql-input::placeholder { color: var(--text-muted); }
+
+        .btn {
+            padding: 0.625rem 1.25rem;
+            border: none;
+            border-radius: 8px;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+
+        .btn-execute {
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-cyan));
+            color: white;
+        }
+        .btn-execute:hover { transform: translateY(-1px); box-shadow: 0 4px 12px var(--glow-blue); }
+
+        .btn-query {
+            background: linear-gradient(135deg, var(--accent-green), var(--accent-cyan));
+            color: white;
+        }
+        .btn-query:hover { transform: translateY(-1px); box-shadow: 0 4px 12px var(--glow-green); }
+
+        .target-select {
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.625rem 0.75rem;
+            color: var(--text-primary);
+            font-size: 0.8rem;
+            outline: none;
+        }
+
+        /* ── Results Table ── */
+        .results-section {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.25rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .results-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1rem;
+        }
+
+        .results-title {
+            font-size: 0.9rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .results-meta {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th {
+            text-align: left;
+            padding: 0.6rem 1rem;
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            background: var(--bg-primary);
+            border-bottom: 1px solid var(--border);
+        }
+
+        td {
+            padding: 0.6rem 1rem;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            border-bottom: 1px solid rgba(42, 58, 77, 0.5);
+            color: var(--text-secondary);
+        }
+
+        tr:hover td { background: rgba(59, 130, 246, 0.05); }
+
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+
+        /* ── Log ── */
+        .log-section {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.25rem;
+        }
+
+        .log-entries {
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            line-height: 1.8;
+        }
+
+        .log-entry {
+            padding: 0.1rem 0;
+            color: var(--text-muted);
+        }
+
+        .log-entry.success { color: var(--accent-green); }
+        .log-entry.error { color: var(--accent-red); }
+        .log-entry.info { color: var(--accent-cyan); }
+
+        .log-time { color: var(--text-muted); margin-right: 0.5rem; }
+
+        /* ── Responsive ── */
+        @media (max-width: 768px) {
+            .main { padding: 1rem; }
+            .nodes-grid { grid-template-columns: 1fr; }
+            .console-row { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-left">
+            <div>
+                <div class="logo">⚡ Titan</div>
+                <div class="logo-sub">Distributed SQLite</div>
+            </div>
+        </div>
+        <div class="cluster-badge" id="cluster-status">
+            <div class="pulse-dot"></div>
+            <span>Connecting...</span>
+        </div>
+    </div>
+
+    <div class="main">
+        <div class="nodes-grid" id="nodes-grid"></div>
+
+        <div class="console-section">
+            <div class="console-title">💻 SQL Console</div>
+            <div class="console-row">
+                <input type="text" class="sql-input" id="sql-input" 
+                    placeholder="Enter SQL... e.g. INSERT INTO demo (msg) VALUES ('hello')" 
+                    onkeydown="if(event.key==='Enter') executeSQL()">
+                <select class="target-select" id="target-node">
+                    <option value="auto">Auto (Leader)</option>
+                </select>
+                <button class="btn btn-execute" onclick="executeSQL()">▶ Execute</button>
+                <button class="btn btn-query" onclick="querySQL()">📊 Query</button>
+            </div>
+        </div>
+
+        <div class="results-section" id="results-section" style="display:none">
+            <div class="results-header">
+                <div class="results-title">📋 Query Results</div>
+                <div class="results-meta" id="results-meta"></div>
+            </div>
+            <div id="results-table"></div>
+        </div>
+
+        <div class="log-section">
+            <div class="console-title">📜 Activity Log</div>
+            <div class="log-entries" id="log-entries"></div>
+        </div>
+    </div>
+
+    <script>
+        const NODES = [
+            { id: 1, httpPort: 8001, udpPort: 5001 },
+            { id: 2, httpPort: 8002, udpPort: 5002 },
+            { id: 3, httpPort: 8003, udpPort: 5003 },
+        ];
+
+        let nodeStates = {};
+        let leaderPort = null;
+
+        function log(msg, type = '') {
+            const el = document.getElementById('log-entries');
+            const time = new Date().toLocaleTimeString();
+            el.innerHTML = `<div class="log-entry ${type}"><span class="log-time">${time}</span>${msg}</div>` + el.innerHTML;
+            if (el.children.length > 50) el.removeChild(el.lastChild);
+        }
+
+        async function fetchNodeStatus(node) {
+            try {
+                const res = await fetch(`http://127.0.0.1:${node.httpPort}/status`, { signal: AbortSignal.timeout(2000) });
+                const data = await res.json();
+                return { ...data, online: true };
+            } catch {
+                return { node_id: node.id, role: 'Offline', term: '-', commit_index: '-', last_applied: '-', log_length: '-', peers: [], udp_port: node.udpPort, http_port: node.httpPort, online: false };
+            }
+        }
+
+        function renderNode(data) {
+            const roleClass = data.online ? data.role.toLowerCase() : 'offline';
+            const roleIcon = data.role === 'Leader' ? '👑' : data.role === 'Follower' ? '🔵' : data.role === 'Candidate' ? '🟣' : '🔴';
+
+            return `
+                <div class="node-card ${roleClass}">
+                    <div class="node-header">
+                        <div class="node-title">
+                            <span class="node-name">${roleIcon} Node ${data.node_id}</span>
+                        </div>
+                        <span class="role-badge ${roleClass}">${data.role}</span>
+                    </div>
+                    <div class="node-stats">
+                        <div class="stat">
+                            <span class="stat-label">Term</span>
+                            <span class="stat-value">${data.term}</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">Commit Index</span>
+                            <span class="stat-value">${data.commit_index}</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">Applied</span>
+                            <span class="stat-value">${data.last_applied}</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-label">Log Length</span>
+                            <span class="stat-value">${data.log_length}</span>
+                        </div>
+                    </div>
+                    <div class="node-ports">
+                        <span>UDP :${data.udp_port}</span>
+                        <span>HTTP :${data.http_port}</span>
+                    </div>
+                </div>`;
+        }
+
+        async function updateDashboard() {
+            const results = await Promise.all(NODES.map(fetchNodeStatus));
+            const grid = document.getElementById('nodes-grid');
+            grid.innerHTML = results.map(renderNode).join('');
+
+            // Update node selector
+            const select = document.getElementById('target-node');
+            const currentVal = select.value;
+            select.innerHTML = '<option value="auto">Auto (Leader)</option>';
+            results.forEach(r => {
+                if (r.online) {
+                    select.innerHTML += `<option value="${r.http_port}">Node ${r.node_id} (${r.role})</option>`;
+                }
+            });
+            select.value = currentVal;
+
+            // Find leader
+            const leader = results.find(r => r.role === 'Leader');
+            leaderPort = leader ? leader.http_port : null;
+
+            const onlineCount = results.filter(r => r.online).length;
+            const badge = document.getElementById('cluster-status');
+            if (onlineCount === 0) {
+                badge.innerHTML = '<div class="pulse-dot" style="background:var(--accent-red)"></div><span>Offline</span>';
+            } else if (leader) {
+                badge.innerHTML = `<div class="pulse-dot"></div><span>${onlineCount}/3 Nodes · Leader: Node ${leader.node_id}</span>`;
+            } else {
+                badge.innerHTML = '<div class="pulse-dot" style="background:var(--accent-amber)"></div><span>Election in progress...</span>';
+            }
+        }
+
+        function getTargetPort() {
+            const sel = document.getElementById('target-node').value;
+            if (sel === 'auto') return leaderPort || 8001;
+            return parseInt(sel);
+        }
+
+        async function executeSQL() {
+            const sql = document.getElementById('sql-input').value.trim();
+            if (!sql) return;
+
+            const port = getTargetPort();
+            log(`Executing on :${port} → ${sql}`, 'info');
+
+            try {
+                const res = await fetch(`http://127.0.0.1:${port}/execute`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sql }),
+                });
+                const data = await res.json();
+                if (data.success) {
+                    log(`✅ ${data.message}`, 'success');
+                } else {
+                    log(`❌ ${data.message}`, 'error');
+                }
+            } catch (e) {
+                log(`❌ Connection failed: ${e.message}`, 'error');
+            }
+
+            setTimeout(updateDashboard, 500);
+        }
+
+        async function querySQL() {
+            const sql = document.getElementById('sql-input').value.trim();
+            if (!sql) return;
+
+            const port = getTargetPort();
+            log(`Querying :${port} → ${sql}`, 'info');
+
+            try {
+                const res = await fetch(`http://127.0.0.1:${port}/query?` + new URLSearchParams({ sql }));
+                const data = await res.json();
+
+                const section = document.getElementById('results-section');
+                const table = document.getElementById('results-table');
+                const meta = document.getElementById('results-meta');
+
+                if (data.success && data.rows.length > 0) {
+                    section.style.display = 'block';
+                    meta.textContent = `${data.rows.length} row${data.rows.length > 1 ? 's' : ''} · from Node on :${port}`;
+
+                    let html = '<table><thead><tr>';
+                    if (data.columns.length > 0) {
+                        data.columns.forEach(c => html += `<th>${c}</th>`);
+                    } else {
+                        data.rows[0].forEach((_, i) => html += `<th>col_${i}</th>`);
+                    }
+                    html += '</tr></thead><tbody>';
+                    data.rows.forEach(row => {
+                        html += '<tr>' + row.map(v => `<td>${v}</td>`).join('') + '</tr>';
+                    });
+                    html += '</tbody></table>';
+                    table.innerHTML = html;
+                    log(`📊 ${data.rows.length} rows returned`, 'success');
+                } else if (data.success) {
+                    section.style.display = 'block';
+                    table.innerHTML = '<div class="empty-state">No rows returned</div>';
+                    meta.textContent = '0 rows';
+                    log('📊 Query returned 0 rows', 'info');
+                } else {
+                    log(`❌ ${data.error}`, 'error');
+                }
+            } catch (e) {
+                log(`❌ Query failed: ${e.message}`, 'error');
+            }
+        }
+
+        // Start polling
+        updateDashboard();
+        setInterval(updateDashboard, 2000);
+        log('Dashboard started. Polling cluster every 2s...', 'info');
+    </script>
+</body>
+</html>
