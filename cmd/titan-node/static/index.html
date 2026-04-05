@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Titan — Distributed SQLite Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg-primary: #0a0e1a;
+      --bg-secondary: #111827;
+      --bg-card: rgba(17, 24, 39, 0.7);
+      --bg-card-hover: rgba(30, 41, 59, 0.8);
+      --border: rgba(99, 102, 241, 0.15);
+      --border-active: rgba(99, 102, 241, 0.4);
+      --text-primary: #e2e8f0;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --accent: #6366f1;
+      --accent-glow: rgba(99, 102, 241, 0.25);
+      --green: #10b981;
+      --green-glow: rgba(16, 185, 129, 0.2);
+      --amber: #f59e0b;
+      --amber-glow: rgba(245, 158, 11, 0.2);
+      --red: #ef4444;
+      --red-glow: rgba(239, 68, 68, 0.2);
+      --radius: 12px;
+      --radius-sm: 8px;
+    }
+    body {
+      font-family: 'Inter', -apple-system, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+    body::before {
+      content: '';
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: radial-gradient(ellipse 80% 50% at 50% -20%, var(--accent-glow) 0%, transparent 60%);
+      pointer-events: none;
+      z-index: 0;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem;
+      position: relative;
+      z-index: 1;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 2.5rem;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .logo-icon {
+      width: 40px; height: 40px;
+      background: linear-gradient(135deg, var(--accent), #818cf8);
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.2rem;
+      box-shadow: 0 0 20px var(--accent-glow);
+    }
+    .logo h1 { font-size: 1.4rem; font-weight: 700; letter-spacing: -0.02em; }
+    .logo span { color: var(--text-muted); font-size: 0.85rem; font-weight: 400; }
+    .connection-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 0.5rem 1rem;
+      backdrop-filter: blur(12px);
+    }
+    .connection-bar input {
+      background: transparent;
+      border: none;
+      color: var(--text-primary);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+      width: 160px;
+      outline: none;
+    }
+    .connection-bar button {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 0.35rem 0.85rem;
+      border-radius: 6px;
+      font-family: 'Inter', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .connection-bar button:hover { background: #818cf8; transform: translateY(-1px); }
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--red);
+      transition: background 0.3s;
+    }
+    .status-dot.connected { background: var(--green); box-shadow: 0 0 8px var(--green-glow); }
+
+    /* ── Cluster Overview ── */
+    .cluster-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+    .node-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+      backdrop-filter: blur(12px);
+      transition: all 0.3s;
+      position: relative;
+      overflow: hidden;
+    }
+    .node-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 2px;
+      background: var(--text-muted);
+      transition: background 0.3s;
+    }
+    .node-card.leader::before { background: linear-gradient(90deg, var(--green), var(--accent)); }
+    .node-card.follower::before { background: var(--accent); }
+    .node-card.candidate::before { background: var(--amber); }
+    .node-card.offline::before { background: var(--red); }
+    .node-card:hover { border-color: var(--border-active); transform: translateY(-2px); box-shadow: 0 8px 25px rgba(0,0,0,0.3); }
+    .node-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+    .node-name { font-weight: 600; font-size: 1rem; }
+    .role-badge {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 0.2rem 0.6rem;
+      border-radius: 20px;
+    }
+    .role-badge.leader { background: var(--green-glow); color: var(--green); }
+    .role-badge.follower { background: var(--accent-glow); color: #a5b4fc; }
+    .role-badge.candidate { background: var(--amber-glow); color: var(--amber); }
+    .role-badge.offline { background: var(--red-glow); color: var(--red); }
+    .node-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+    .stat { display: flex; flex-direction: column; gap: 0.15rem; }
+    .stat-label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+    .stat-value { font-family: 'JetBrains Mono', monospace; font-size: 0.9rem; font-weight: 500; }
+
+    /* ── Panels ── */
+    .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 2rem; }
+    @media (max-width: 768px) { .panels { grid-template-columns: 1fr; } }
+    .panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+      backdrop-filter: blur(12px);
+    }
+    .panel-title {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .sql-input {
+      width: 100%;
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text-primary);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem;
+      padding: 0.75rem 1rem;
+      resize: vertical;
+      min-height: 80px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .sql-input:focus { border-color: var(--accent); }
+    .btn-row { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+    .btn {
+      padding: 0.5rem 1.2rem;
+      border: none;
+      border-radius: var(--radius-sm);
+      font-family: 'Inter', sans-serif;
+      font-size: 0.8rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: #818cf8; transform: translateY(-1px); }
+    .btn-secondary { background: rgba(99,102,241,0.1); color: var(--accent); border: 1px solid var(--border); }
+    .btn-secondary:hover { background: rgba(99,102,241,0.2); }
+
+    /* ── Results ── */
+    .results {
+      margin-top: 1rem;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    .results table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+    }
+    .results th {
+      text-align: left;
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+      color: var(--text-muted);
+      font-weight: 500;
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .results td {
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid rgba(255,255,255,0.03);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+    }
+    .results tr:hover td { color: var(--text-primary); background: rgba(255,255,255,0.02); }
+
+    /* ── Event Log ── */
+    .event-log {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+      backdrop-filter: blur(12px);
+    }
+    .log-entries {
+      max-height: 220px;
+      overflow-y: auto;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.75rem;
+      line-height: 1.8;
+    }
+    .log-entry { color: var(--text-muted); padding: 0.15rem 0; }
+    .log-entry .ts { color: var(--text-muted); margin-right: 0.5rem; }
+    .log-entry.success { color: var(--green); }
+    .log-entry.error { color: var(--red); }
+    .log-entry.info { color: var(--accent); }
+
+    .response-msg {
+      margin-top: 0.75rem;
+      padding: 0.75rem 1rem;
+      border-radius: var(--radius-sm);
+      font-size: 0.8rem;
+      font-family: 'JetBrains Mono', monospace;
+      display: none;
+    }
+    .response-msg.success { display: block; background: var(--green-glow); color: var(--green); border: 1px solid rgba(16,185,129,0.3); }
+    .response-msg.error { display: block; background: var(--red-glow); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
+
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="logo">
+        <div class="logo-icon">⚡</div>
+        <div>
+          <h1>Titan</h1>
+          <span>Distributed SQLite</span>
+        </div>
+      </div>
+      <div class="connection-bar">
+        <div class="status-dot" id="statusDot"></div>
+        <input id="baseUrl" value="http://127.0.0.1:8001" placeholder="Node URL" />
+        <button onclick="connect()">Connect</button>
+      </div>
+    </header>
+
+    <div class="cluster-grid" id="clusterGrid">
+      <!-- Node cards populate here -->
+    </div>
+
+    <div class="panels">
+      <div class="panel">
+        <div class="panel-title">✏️ Write (Execute SQL)</div>
+        <textarea class="sql-input" id="writeSql" placeholder="INSERT INTO demo (msg) VALUES ('hello from titan!')"></textarea>
+        <div class="btn-row">
+          <button class="btn btn-primary" onclick="executeSql()">Execute</button>
+          <button class="btn btn-secondary" onclick="document.getElementById('writeSql').value=''">Clear</button>
+        </div>
+        <div class="response-msg" id="writeResponse"></div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">🔍 Read (Query)</div>
+        <textarea class="sql-input" id="readSql" placeholder="SELECT * FROM demo"></textarea>
+        <div class="btn-row">
+          <button class="btn btn-primary" onclick="querySql()">Query</button>
+          <button class="btn btn-secondary" onclick="document.getElementById('readSql').value=''">Clear</button>
+        </div>
+        <div class="results" id="queryResults"></div>
+      </div>
+    </div>
+
+    <div class="event-log">
+      <div class="panel-title">📋 Event Log</div>
+      <div class="log-entries" id="eventLog"></div>
+    </div>
+  </div>
+
+  <script>
+    let baseUrl = 'http://127.0.0.1:8001';
+    let pollTimer = null;
+    const NODES = [8001, 8002, 8003];
+
+    function log(msg, type = 'info') {
+      const el = document.getElementById('eventLog');
+      const ts = new Date().toLocaleTimeString();
+      el.innerHTML = `<div class="log-entry ${type}"><span class="ts">${ts}</span>${msg}</div>` + el.innerHTML;
+    }
+
+    function connect() {
+      baseUrl = document.getElementById('baseUrl').value.replace(/\/$/, '');
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(pollCluster, 2000);
+      pollCluster();
+      log(`Connecting to ${baseUrl}...`);
+    }
+
+    async function pollCluster() {
+      const grid = document.getElementById('clusterGrid');
+      let cards = '';
+      let anyConnected = false;
+
+      for (const port of NODES) {
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/status`, { signal: AbortSignal.timeout(1500) });
+          const s = await res.json();
+          anyConnected = true;
+          const role = s.role.toLowerCase();
+          cards += `
+            <div class="node-card ${role}">
+              <div class="node-header">
+                <span class="node-name">Node ${s.node_id}</span>
+                <span class="role-badge ${role}">${s.role === 'Leader' ? '👑 ' : ''}${s.role}</span>
+              </div>
+              <div class="node-stats">
+                <div class="stat"><span class="stat-label">Term</span><span class="stat-value">${s.term}</span></div>
+                <div class="stat"><span class="stat-label">Commit Idx</span><span class="stat-value">${s.commit_index}</span></div>
+                <div class="stat"><span class="stat-label">Applied</span><span class="stat-value">${s.last_applied}</span></div>
+                <div class="stat"><span class="stat-label">Log Length</span><span class="stat-value">${s.log_length}</span></div>
+                <div class="stat"><span class="stat-label">UDP Port</span><span class="stat-value">${s.udp_port}</span></div>
+                <div class="stat"><span class="stat-label">HTTP Port</span><span class="stat-value">${s.http_port}</span></div>
+              </div>
+            </div>`;
+        } catch {
+          cards += `
+            <div class="node-card offline">
+              <div class="node-header">
+                <span class="node-name">Node (port ${port})</span>
+                <span class="role-badge offline">Offline</span>
+              </div>
+              <div class="node-stats">
+                <div class="stat"><span class="stat-label">Status</span><span class="stat-value">—</span></div>
+              </div>
+            </div>`;
+        }
+      }
+      grid.innerHTML = cards;
+      document.getElementById('statusDot').className = 'status-dot' + (anyConnected ? ' connected' : '');
+    }
+
+    async function executeSql() {
+      const sql = document.getElementById('writeSql').value.trim();
+      if (!sql) return;
+      const resp = document.getElementById('writeResponse');
+      try {
+        log(`Executing: ${sql}`);
+        const res = await fetch(`${baseUrl}/execute`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sql }),
+        });
+        const data = await res.json();
+        resp.textContent = data.message;
+        resp.className = 'response-msg ' + (data.success ? 'success' : 'error');
+        log(data.message, data.success ? 'success' : 'error');
+      } catch (e) {
+        resp.textContent = 'Connection failed: ' + e.message;
+        resp.className = 'response-msg error';
+        log('Connection failed: ' + e.message, 'error');
+      }
+    }
+
+    async function querySql() {
+      const sql = document.getElementById('readSql').value.trim();
+      if (!sql) return;
+      const container = document.getElementById('queryResults');
+      try {
+        log(`Query: ${sql}`);
+        const res = await fetch(`${baseUrl}/query?sql=${encodeURIComponent(sql)}`);
+        const data = await res.json();
+        if (!data.success) {
+          container.innerHTML = `<div class="response-msg error" style="display:block">${data.error}</div>`;
+          log(data.error, 'error');
+          return;
+        }
+        if (data.rows.length === 0) {
+          container.innerHTML = '<div style="color:var(--text-muted);font-size:0.8rem;padding:0.5rem 0">No rows returned</div>';
+          log('Query returned 0 rows', 'info');
+          return;
+        }
+        let html = '<table><tr>';
+        data.columns.forEach(c => html += `<th>${c}</th>`);
+        html += '</tr>';
+        data.rows.forEach(row => {
+          html += '<tr>';
+          row.forEach(v => html += `<td>${v}</td>`);
+          html += '</tr>';
+        });
+        html += '</table>';
+        container.innerHTML = html;
+        log(`Query returned ${data.rows.length} row(s)`, 'success');
+      } catch (e) {
+        container.innerHTML = `<div class="response-msg error" style="display:block">Connection failed: ${e.message}</div>`;
+        log('Connection failed: ' + e.message, 'error');
+      }
+    }
+
+    // Auto-connect on load
+    connect();
+  </script>
+</body>
+</html>

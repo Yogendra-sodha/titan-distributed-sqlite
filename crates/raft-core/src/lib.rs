@@ -8,6 +8,7 @@ use rpc::{
     AppendEntriesArgs, AppendEntriesReply, MessagePayload, RaftMessage, RequestVoteArgs,
     RequestVoteReply,
 };
+use store::RaftStateStore;
 
 use serde::{Serialize, Deserialize};
 
@@ -28,7 +29,6 @@ pub struct LogEntry {
     pub payload: Vec<u8>,
 }
 
-#[derive(Debug)]
 pub struct RaftNode {
     pub node_id: RaftNodeId,
     pub peers: Vec<RaftNodeId>,
@@ -50,9 +50,25 @@ pub struct RaftNode {
 
     // Outbox
     pub outbox: Vec<RaftMessage>,
+
+    // Optional persistent store
+    store: Option<Box<dyn RaftStateStore + Send>>,
+}
+
+impl std::fmt::Debug for RaftNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RaftNode")
+            .field("node_id", &self.node_id)
+            .field("role", &self.role)
+            .field("current_term", &self.current_term)
+            .field("commit_index", &self.commit_index)
+            .field("log_len", &self.log.len())
+            .finish()
+    }
 }
 
 impl RaftNode {
+    /// Create a new in-memory node (for tests and backward compatibility).
     pub fn new(node_id: RaftNodeId, peers: Vec<RaftNodeId>, election_timeout: Duration) -> Self {
         let now = Instant::now();
         Self {
@@ -70,6 +86,78 @@ impl RaftNode {
             match_index: HashMap::new(),
             votes_received: 0,
             outbox: Vec::new(),
+            store: None,
+        }
+    }
+
+    /// Create a node backed by a persistent store. Recovers term, votedFor,
+    /// log, and commit_index from the store on startup.
+    pub fn new_with_store(
+        node_id: RaftNodeId,
+        peers: Vec<RaftNodeId>,
+        election_timeout: Duration,
+        store: Box<dyn RaftStateStore + Send>,
+    ) -> Self {
+        let now = Instant::now();
+
+        // Recover persisted state
+        let current_term = store.current_term();
+        let voted_for = store.voted_for();
+        let log: Vec<LogEntry> = store.entries().to_vec();
+        let commit_index = store.commit_index();
+        let last_applied = commit_index; // Will re-apply from commit_index on startup
+
+        Self {
+            node_id,
+            peers,
+            current_term,
+            voted_for,
+            commit_index,
+            last_applied,
+            role: Role::Follower, // Always start as follower
+            election_timeout,
+            election_deadline: now + election_timeout,
+            log,
+            next_index: HashMap::new(),
+            match_index: HashMap::new(),
+            votes_received: 0,
+            outbox: Vec::new(),
+            store: Some(store),
+        }
+    }
+
+    /// Persist current term to the store (if present).
+    fn persist_term(&mut self) {
+        if let Some(ref mut store) = self.store {
+            store.set_current_term(self.current_term);
+        }
+    }
+
+    /// Persist voted_for to the store (if present).
+    fn persist_voted_for(&mut self) {
+        if let Some(ref mut store) = self.store {
+            store.set_voted_for(self.voted_for);
+        }
+    }
+
+    /// Persist a log entry to the store (if present).
+    fn persist_log_append(&mut self, entry: &LogEntry) {
+        if let Some(ref mut store) = self.store {
+            store.append_entry(entry.clone());
+        }
+    }
+
+    /// Persist log truncation to the store (if present).
+    fn persist_log_truncate(&mut self, from_index: u64) {
+        if let Some(ref mut store) = self.store {
+            store.truncate_from(from_index);
+        }
+    }
+
+    /// Persist commit_index to the store (if present).
+    fn persist_commit_index(&mut self) {
+        if let Some(ref mut store) = self.store {
+            store.set_commit_index(self.commit_index);
         }
     }
 
@@ -82,6 +170,8 @@ impl RaftNode {
         self.role = Role::Follower;
         self.current_term = term;
         self.voted_for = None;
+        self.persist_term();
+        self.persist_voted_for();
         self.reset_election_deadline();
     }
 
@@ -90,6 +180,8 @@ impl RaftNode {
         self.role = Role::Candidate;
         self.voted_for = Some(self.node_id);
         self.votes_received = 1;
+        self.persist_term();
+        self.persist_voted_for();
         self.reset_election_deadline();
 
         let lli = self.log.last().map(|e| e.index).unwrap_or(0);
@@ -198,6 +290,7 @@ impl RaftNode {
                 if args.term == current_term && (self.voted_for.is_none() || self.voted_for == Some(args.candidate_id)) && log_ok {
                     vote_granted = true;
                     self.voted_for = Some(args.candidate_id);
+                    self.persist_voted_for();
                     self.reset_election_deadline();
                 }
 
@@ -239,10 +332,15 @@ impl RaftNode {
                         for entry in args.entries {
                             if insert_idx < self.log.len() {
                                 if self.log[insert_idx].term != entry.term {
+                                    // Truncate conflicting entries — persist first
+                                    let truncate_from = self.log[insert_idx].index;
+                                    self.persist_log_truncate(truncate_from);
                                     self.log.truncate(insert_idx);
+                                    self.persist_log_append(&entry);
                                     self.log.push(entry);
                                 }
                             } else {
+                                self.persist_log_append(&entry);
                                 self.log.push(entry);
                             }
                             insert_idx += 1;
@@ -252,6 +350,7 @@ impl RaftNode {
 
                         if args.leader_commit > self.commit_index {
                             self.commit_index = std::cmp::min(args.leader_commit, self.log.last().map(|e| e.index).unwrap_or(0));
+                            self.persist_commit_index();
                         }
                     }
                 }
@@ -280,6 +379,7 @@ impl RaftNode {
 
                         if nci > self.commit_index && nci as usize <= self.log.len() && self.log[nci as usize - 1].term == self.current_term {
                             self.commit_index = nci;
+                            self.persist_commit_index();
                         }
                     } else {
                         // decrement next_index and retry
@@ -306,11 +406,13 @@ impl RaftNode {
         }
 
         let index = self.log.last().map(|e| e.index + 1).unwrap_or(1);
-        self.log.push(LogEntry {
+        let entry = LogEntry {
             index,
             term: self.current_term,
             payload,
-        });
+        };
+        self.persist_log_append(&entry);
+        self.log.push(entry);
 
         self.broadcast_append_entries();
         Some(index)
@@ -328,6 +430,11 @@ pub struct DeterministicApplyLoop {
 impl DeterministicApplyLoop {
     pub fn new() -> Self {
         Self { last_applied: 0 }
+    }
+
+    /// Create an apply loop that starts from a given index (for restart recovery).
+    pub fn new_from(last_applied: u64) -> Self {
+        Self { last_applied }
     }
 
     pub fn apply(&mut self, node: &mut RaftNode) -> Vec<LogEntry> {
