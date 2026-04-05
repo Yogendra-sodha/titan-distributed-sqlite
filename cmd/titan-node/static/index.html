@@ -388,13 +388,37 @@
       document.getElementById('statusDot').className = 'status-dot' + (anyConnected ? ' connected' : '');
     }
 
+    async function findLeaderPort() {
+      for (const port of NODES) {
+        try {
+          const res = await fetch(`http://127.0.0.1:${port}/status`, { signal: AbortSignal.timeout(1000) });
+          const s = await res.json();
+          if (s.role === 'Leader') return port;
+        } catch {}
+      }
+      return null;
+    }
+
     async function executeSql() {
       const sql = document.getElementById('writeSql').value.trim();
       if (!sql) return;
       const resp = document.getElementById('writeResponse');
+
+      log(`Executing: ${sql}`);
+
+      // Auto-discover the leader
+      const leaderPort = await findLeaderPort();
+      if (!leaderPort) {
+        resp.textContent = 'No leader found! Is the cluster running?';
+        resp.className = 'response-msg error';
+        log('No leader found in cluster', 'error');
+        return;
+      }
+
+      log(`Routing write to Leader on :${leaderPort}`, 'info');
+
       try {
-        log(`Executing: ${sql}`);
-        const res = await fetch(`${baseUrl}/execute`, {
+        const res = await fetch(`http://127.0.0.1:${leaderPort}/execute`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ sql }),
@@ -416,7 +440,8 @@
       const container = document.getElementById('queryResults');
       try {
         log(`Query: ${sql}`);
-        const res = await fetch(`${baseUrl}/query?sql=${encodeURIComponent(sql)}`);
+        const queryBase = window.location.origin;
+        const res = await fetch(`${queryBase}/query?sql=${encodeURIComponent(sql)}`);
         const data = await res.json();
         if (!data.success) {
           container.innerHTML = `<div class="response-msg error" style="display:block">${data.error}</div>`;
