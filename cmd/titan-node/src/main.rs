@@ -1,21 +1,22 @@
 use anyhow::Result;
 use axum::{
     extract::{Query, State},
-    http::{HeaderValue, Method},
+    http::Method,
     response::Html,
     routing::{get, post},
     Json, Router,
 };
-use tower::ServiceBuilder;
-use raft_core::{rpc::RaftMessage, RaftNode, RaftNodeId, Role};
+use raft_core::{rpc::RaftMessage, store::SqliteStateStore, DeterministicApplyLoop, RaftNode, RaftNodeId, Role};
 use serde::{Deserialize, Serialize};
 use sqlite_adapter::SqliteAdapter;
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::net::UdpSocket;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::net::TcpListener;
+use tokio::sync::oneshot;
 use wal_replicator::WalReplicator;
 
 // ── Shared State between UDP Raft loop and HTTP server ──
@@ -24,6 +25,14 @@ struct SharedState {
     node: Mutex<RaftNode>,
     db: Mutex<SqliteAdapter>,
     node_id: u64,
+    /// Pending write confirmations: log_index → oneshot sender
+    pending_confirms: Mutex<HashMap<u64, oneshot::Sender<WriteConfirmation>>>,
+}
+
+#[derive(Debug, Clone)]
+struct WriteConfirmation {
+    log_index: u64,
+    committed: bool,
 }
 
 // ── HTTP API Types ──
@@ -31,6 +40,12 @@ struct SharedState {
 #[derive(Deserialize)]
 struct ExecuteRequest {
     sql: String,
+    #[serde(default = "default_true")]
+    wait_for_commit: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Serialize)]
@@ -38,6 +53,7 @@ struct ExecuteResponse {
     success: bool,
     message: String,
     log_index: Option<u64>,
+    committed: bool,
 }
 
 #[derive(Deserialize)]
@@ -64,6 +80,7 @@ struct StatusResponse {
     peers: Vec<u64>,
     udp_port: u64,
     http_port: u64,
+    persistent_state: bool,
 }
 
 // ── Main ──
@@ -120,28 +137,52 @@ fn run_server(id: u64, peers: Vec<RaftNodeId>) -> Result<()> {
     tracing::info!("🌐 HTTP API port: {}", http_port);
     tracing::info!("===================================");
 
+    // Ensure data directory exists
+    fs::create_dir_all("./data")?;
+
+    // ── Persistent Raft State Store ──
+    let raft_store_path = format!("./data/titan_node_{}_raft.db", id);
+    let store = SqliteStateStore::new(&raft_store_path);
+    tracing::info!("💾 Raft state store: {}", raft_store_path);
+
     // Give node 1 a slight advantage to reliably become the first leader
     let timeout = if id == 1 { 300 } else { 450 + id * 50 };
-    let node = RaftNode::new(RaftNodeId(id), peers, Duration::from_millis(timeout));
+    let node = RaftNode::new_with_store(
+        RaftNodeId(id),
+        peers,
+        Duration::from_millis(timeout),
+        Box::new(store),
+    );
+
+    // Log recovered state
+    tracing::info!(
+        "📂 Recovered state: term={}, log_len={}, commit_index={}",
+        node.current_term,
+        node.log.len(),
+        node.commit_index
+    );
 
     let db_adapter = SqliteAdapter::new(&format!("./data/titan_node_{}.db", id)).unwrap_or_else(|_| {
-        fs::create_dir_all("./data").unwrap();
         SqliteAdapter::new(&format!("./data/titan_node_{}.db", id)).unwrap()
     });
     db_adapter
         .execute_write("CREATE TABLE IF NOT EXISTS demo (id INTEGER PRIMARY KEY, msg TEXT);")
         ?;
 
+    // If recovering, the apply loop starts from last_applied (= commit_index on restart)
+    let recovered_last_applied = node.last_applied;
+
     let shared = Arc::new(SharedState {
         node: Mutex::new(node),
         db: Mutex::new(db_adapter),
         node_id: id,
+        pending_confirms: Mutex::new(HashMap::new()),
     });
 
     // ── Spawn the UDP Raft loop in a background thread ──
     let raft_shared = Arc::clone(&shared);
     std::thread::spawn(move || {
-        run_raft_loop(id, raft_shared);
+        run_raft_loop(id, raft_shared, recovered_last_applied);
     });
 
     // ── Run the HTTP API on the main thread with tokio ──
@@ -174,14 +215,14 @@ fn run_server(id: u64, peers: Vec<RaftNodeId>) -> Result<()> {
 
 // ── UDP Raft Loop (runs in background thread) ──
 
-fn run_raft_loop(id: u64, shared: Arc<SharedState>) {
+fn run_raft_loop(id: u64, shared: Arc<SharedState>, recovered_last_applied: u64) {
     let socket = UdpSocket::bind(format!("127.0.0.1:{}", 5000 + id)).unwrap();
     socket.set_nonblocking(true).unwrap();
 
     let mut buf = [0; 65535];
     let mut last_tick = Instant::now();
     let mut last_role = Role::Follower;
-    let mut apply_loop = raft_core::DeterministicApplyLoop::new();
+    let mut apply_loop = DeterministicApplyLoop::new_from(recovered_last_applied);
 
     loop {
         // Handle incoming UDP
@@ -234,16 +275,26 @@ fn run_raft_loop(id: u64, shared: Arc<SharedState>) {
             }
         }
 
-        // State Machine Apply Loop
+        // State Machine Apply Loop + Write Confirmation
         {
             let mut node = shared.node.lock().unwrap();
             let committed_entries = apply_loop.apply(&mut node);
             let db = shared.db.lock().unwrap();
+            let mut confirms = shared.pending_confirms.lock().unwrap();
+
             for entry in committed_entries {
                 let sql = String::from_utf8_lossy(&entry.payload).into_owned();
                 tracing::info!("💾 Node {} Applying SQL to Local SQLite Disk: {}", id, sql);
                 if let Err(e) = db.execute_write(&sql) {
                     tracing::error!("Failed to apply SQL: {}", e);
+                }
+
+                // Notify any waiting HTTP handler that this entry is committed
+                if let Some(sender) = confirms.remove(&entry.index) {
+                    let _ = sender.send(WriteConfirmation {
+                        log_index: entry.index,
+                        committed: true,
+                    });
                 }
             }
         }
@@ -262,32 +313,84 @@ async fn handle_execute(
     State(shared): State<Arc<SharedState>>,
     Json(req): Json<ExecuteRequest>,
 ) -> Json<ExecuteResponse> {
-    let mut node = shared.node.lock().unwrap();
+    let (log_index, rx) = {
+        let mut node = shared.node.lock().unwrap();
 
-    if node.role != Role::Leader {
+        if node.role != Role::Leader {
+            return Json(ExecuteResponse {
+                success: false,
+                message: format!(
+                    "This node is not the Leader. Current role: {:?}. Try another node.",
+                    node.role
+                ),
+                log_index: None,
+                committed: false,
+            });
+        }
+
+        match node.append_local_entry(req.sql.as_bytes().to_vec()) {
+            Some(idx) => {
+                tracing::info!("✅ HTTP Execute Accepted: Raft Log Index {}", idx);
+
+                if req.wait_for_commit {
+                    // Create a oneshot channel for commit notification
+                    let (tx, rx) = oneshot::channel();
+                    shared.pending_confirms.lock().unwrap().insert(idx, tx);
+                    (idx, Some(rx))
+                } else {
+                    (idx, None)
+                }
+            }
+            None => {
+                return Json(ExecuteResponse {
+                    success: false,
+                    message: "Failed to append entry. Node may have lost leadership.".to_string(),
+                    log_index: None,
+                    committed: false,
+                });
+            }
+        }
+    };
+
+    // If not waiting for commit, return immediately
+    if rx.is_none() {
         return Json(ExecuteResponse {
-            success: false,
-            message: format!(
-                "This node is not the Leader. Current role: {:?}. Try another node.",
-                node.role
-            ),
-            log_index: None,
+            success: true,
+            message: format!("SQL accepted and replicating across cluster (log index {})", log_index),
+            log_index: Some(log_index),
+            committed: false,
         });
     }
 
-    match node.append_local_entry(req.sql.as_bytes().to_vec()) {
-        Some(idx) => {
-            tracing::info!("✅ HTTP Execute Accepted: Raft Log Index {}", idx);
-            Json(ExecuteResponse {
-                success: true,
-                message: format!("SQL accepted and replicating across cluster (log index {})", idx),
-                log_index: Some(idx),
-            })
-        }
-        None => Json(ExecuteResponse {
-            success: false,
-            message: "Failed to append entry. Node may have lost leadership.".to_string(),
-            log_index: None,
+    // Wait for commit confirmation with a 5 second timeout
+    let rx = rx.unwrap();
+    match tokio::time::timeout(Duration::from_secs(5), rx).await {
+        Ok(Ok(confirmation)) => Json(ExecuteResponse {
+            success: true,
+            message: format!(
+                "✅ SQL committed across cluster at log index {}",
+                confirmation.log_index
+            ),
+            log_index: Some(confirmation.log_index),
+            committed: true,
+        }),
+        Ok(Err(_)) => Json(ExecuteResponse {
+            success: true,
+            message: format!(
+                "SQL accepted (log index {}), but confirmation channel dropped. Entry may still commit.",
+                log_index
+            ),
+            log_index: Some(log_index),
+            committed: false,
+        }),
+        Err(_) => Json(ExecuteResponse {
+            success: true,
+            message: format!(
+                "SQL accepted (log index {}), but commit confirmation timed out after 5s. Entry is still replicating.",
+                log_index
+            ),
+            log_index: Some(log_index),
+            committed: false,
         }),
     }
 }
@@ -333,6 +436,7 @@ async fn handle_status(
         peers: node.peers.iter().map(|p| p.0).collect(),
         udp_port: 5000 + shared.node_id,
         http_port: 8000 + shared.node_id,
+        persistent_state: true,
     })
 }
 
