@@ -3,505 +3,466 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Titan — Distributed SQLite</title>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet">
+  <title>Titan · Distributed SQLite</title>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
-      --bg: #0B1222;
-      --bg-raised: #0F1A2E;
-      --bg-input: #081018;
-      --border: #1C2E45;
-      --border-hi: #2A4060;
-      --text: #C8D6E5;
-      --text-dim: #5E7A99;
-      --text-bright: #FFFFFF;
-      --green: #00E68A;
-      --green-dim: rgba(0, 230, 138, 0.12);
-      --orange: #FF8A50;
-      --orange-dim: rgba(255, 138, 80, 0.12);
-      --red: #FF5470;
-      --red-dim: rgba(255, 84, 112, 0.12);
-      --cyan: #00C2FF;
-      --cyan-dim: rgba(0, 194, 255, 0.10);
+      --bg: #F5F0E8;
+      --bg-alt: #EDE7DB;
+      --surface: #FFFFFF;
+      --border: #D4C9B8;
+      --border-dark: #A89880;
+      --text: #1A1410;
+      --text-mid: #5C4F3D;
+      --text-light: #8C7E6A;
+      --accent: #B94A2C;
+      --accent-light: rgba(185, 74, 44, 0.08);
+      --teal: #1A7A6D;
+      --teal-light: rgba(26, 122, 109, 0.08);
+      --slate: #3D5467;
+      --slate-light: rgba(61, 84, 103, 0.08);
+      --warn: #C17A15;
+      --warn-light: rgba(193, 122, 21, 0.08);
+      --err: #A13333;
+      --err-light: rgba(161, 51, 51, 0.08);
     }
     body {
-      font-family: 'Outfit', system-ui, sans-serif;
+      font-family: 'Space Grotesk', system-ui, sans-serif;
       background: var(--bg);
       color: var(--text);
       min-height: 100vh;
-      line-height: 1.5;
     }
 
-    /* ── Top Bar ── */
-    .topbar {
-      height: 52px;
-      background: var(--bg-raised);
-      border-bottom: 1px solid var(--border);
+    /* ── Header ── */
+    .hdr {
+      background: var(--surface);
+      border-bottom: 2px solid var(--text);
+      padding: 0 28px;
+      height: 56px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 0 24px;
     }
-    .topbar-left {
-      display: flex;
-      align-items: center;
-      gap: 16px;
+    .hdr-left { display: flex; align-items: baseline; gap: 12px; }
+    .hdr-name {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      color: var(--text);
     }
-    .brand {
-      font-weight: 800;
-      font-size: 18px;
-      letter-spacing: 2px;
-      text-transform: uppercase;
-      color: var(--green);
+    .hdr-tag {
+      font-family: 'Space Mono', monospace;
+      font-size: 11px;
+      color: var(--text-light);
+      border: 1px solid var(--border);
+      padding: 2px 8px;
     }
-    .brand-sep {
-      width: 1px;
-      height: 24px;
-      background: var(--border);
-    }
-    .brand-sub {
-      font-size: 12px;
-      font-weight: 400;
-      color: var(--text-dim);
-      letter-spacing: 1px;
-      text-transform: uppercase;
-    }
-    .cluster-pill {
+    .hdr-status {
       display: flex;
       align-items: center;
       gap: 8px;
-      font-size: 12px;
-      font-weight: 500;
-      color: var(--text-dim);
-      font-family: 'Fira Code', monospace;
+      font-family: 'Space Mono', monospace;
+      font-size: 11px;
+      color: var(--text-mid);
     }
-    .led {
-      width: 8px;
-      height: 8px;
+    .dot {
+      width: 9px;
+      height: 9px;
       border-radius: 50%;
-      background: var(--red);
-      box-shadow: 0 0 0 2px var(--red-dim);
-      transition: all 0.5s;
+      border: 2px solid var(--err);
+      background: transparent;
+      transition: all 0.4s;
     }
-    .led.on {
-      background: var(--green);
-      box-shadow: 0 0 6px var(--green), 0 0 0 2px var(--green-dim);
+    .dot.on {
+      border-color: var(--teal);
+      background: var(--teal);
     }
 
-    /* ── Layout ── */
+    /* ── Shell ── */
     .shell {
-      max-width: 1320px;
+      max-width: 1200px;
       margin: 0 auto;
-      padding: 20px 24px;
+      padding: 24px 28px;
     }
 
-    /* ── Section Labels ── */
-    .section-label {
+    /* ── Section Title ── */
+    .sec {
+      font-family: 'Space Mono', monospace;
       font-size: 10px;
-      font-weight: 600;
-      letter-spacing: 2px;
+      font-weight: 700;
+      letter-spacing: 2.5px;
       text-transform: uppercase;
-      color: var(--text-dim);
-      margin-bottom: 10px;
-      padding-left: 2px;
+      color: var(--text-light);
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .sec::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: var(--border);
     }
 
-    /* ── Node Row ── */
-    .node-row {
+    /* ── Nodes ── */
+    .nodes {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 12px;
-      margin-bottom: 20px;
+      gap: 0;
+      margin-bottom: 28px;
+      border: 2px solid var(--text);
+      background: var(--surface);
     }
-    @media (max-width: 800px) { .node-row { grid-template-columns: 1fr; } }
+    @media (max-width: 800px) { .nodes { grid-template-columns: 1fr; } }
 
-    .node {
-      background: var(--bg-raised);
-      border: 1px solid var(--border);
-      padding: 16px 18px;
-      transition: border-color 0.25s;
+    .nd {
+      padding: 18px 20px;
+      border-right: 1px solid var(--border);
+      position: relative;
     }
-    .node:hover { border-color: var(--border-hi); }
-    .node.is-leader { border-left: 3px solid var(--green); }
-    .node.is-follower { border-left: 3px solid var(--cyan); }
-    .node.is-candidate { border-left: 3px solid var(--orange); }
-    .node.is-offline { border-left: 3px solid var(--red); opacity: 0.5; }
+    .nd:last-child { border-right: none; }
 
-    .node-top {
+    .nd-top {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 12px;
+      margin-bottom: 14px;
     }
-    .node-id {
-      font-family: 'Fira Code', monospace;
-      font-size: 14px;
-      font-weight: 600;
-      color: var(--text-bright);
+    .nd-id {
+      font-family: 'Space Mono', monospace;
+      font-size: 13px;
+      font-weight: 700;
     }
-    .node-role {
-      font-family: 'Fira Code', monospace;
-      font-size: 11px;
-      font-weight: 500;
-      padding: 2px 8px;
-      letter-spacing: 0.5px;
+    .nd-role {
+      font-family: 'Space Mono', monospace;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      padding: 3px 10px;
+      border: 1.5px solid;
     }
-    .node-role.leader { background: var(--green-dim); color: var(--green); }
-    .node-role.follower { background: var(--cyan-dim); color: var(--cyan); }
-    .node-role.candidate { background: var(--orange-dim); color: var(--orange); }
-    .node-role.offline { background: var(--red-dim); color: var(--red); }
+    .nd-role.leader { color: var(--teal); border-color: var(--teal); background: var(--teal-light); }
+    .nd-role.follower { color: var(--slate); border-color: var(--slate); background: var(--slate-light); }
+    .nd-role.candidate { color: var(--warn); border-color: var(--warn); background: var(--warn-light); }
+    .nd-role.offline { color: var(--err); border-color: var(--err); background: var(--err-light); }
 
-    .node-grid {
+    .nd-stats {
       display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
-      gap: 6px 12px;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 4px 0;
     }
-    .ng-item {
+    .ns {
       display: flex;
       flex-direction: column;
     }
-    .ng-label {
+    .ns-k {
+      font-family: 'Space Mono', monospace;
       font-size: 9px;
-      font-weight: 500;
-      letter-spacing: 1.5px;
+      letter-spacing: 1px;
       text-transform: uppercase;
-      color: var(--text-dim);
+      color: var(--text-light);
     }
-    .ng-val {
-      font-family: 'Fira Code', monospace;
-      font-size: 16px;
-      font-weight: 600;
-      color: var(--text-bright);
+    .ns-v {
+      font-family: 'Space Mono', monospace;
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text);
     }
+
+    .nd-bar {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+    }
+    .nd.is-leader .nd-bar { background: var(--teal); }
+    .nd.is-follower .nd-bar { background: var(--slate); }
+    .nd.is-candidate .nd-bar { background: var(--warn); }
+    .nd.is-offline .nd-bar { background: var(--err); }
 
     /* ── Panels ── */
-    .panel-grid {
+    .cols {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 12px;
-      margin-bottom: 20px;
+      gap: 16px;
+      margin-bottom: 28px;
     }
-    @media (max-width: 800px) { .panel-grid { grid-template-columns: 1fr; } }
+    @media (max-width: 800px) { .cols { grid-template-columns: 1fr; } }
 
-    .panel {
-      background: var(--bg-raised);
-      border: 1px solid var(--border);
-      padding: 16px 18px;
+    .box {
+      background: var(--surface);
+      border: 2px solid var(--text);
+      padding: 18px 20px;
     }
-    .panel-head {
+    .box-title {
+      font-family: 'Space Mono', monospace;
       font-size: 11px;
-      font-weight: 600;
-      letter-spacing: 1.5px;
+      font-weight: 700;
+      letter-spacing: 1px;
       text-transform: uppercase;
-      color: var(--text-dim);
-      margin-bottom: 12px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .panel-head::before {
-      content: '';
-      width: 3px;
-      height: 12px;
-      background: var(--green);
+      color: var(--text-mid);
+      margin-bottom: 14px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
     }
 
     /* ── SQL Input ── */
-    .sql-wrap {
-      position: relative;
-    }
-    .sql-wrap::before {
-      content: '$';
-      position: absolute;
-      left: 12px;
-      top: 12px;
-      font-family: 'Fira Code', monospace;
-      font-size: 13px;
-      color: var(--green);
-      pointer-events: none;
-    }
-    .sql-box {
+    .sqlin {
       width: 100%;
-      background: var(--bg-input);
-      border: 1px solid var(--border);
-      color: var(--text-bright);
-      font-family: 'Fira Code', monospace;
-      font-size: 13px;
-      padding: 10px 12px 10px 28px;
-      outline: none;
+      background: var(--bg-alt);
+      border: 1.5px solid var(--border);
+      color: var(--text);
+      font-family: 'Space Mono', monospace;
+      font-size: 12px;
+      padding: 10px 14px;
       resize: vertical;
-      min-height: 64px;
-      transition: border-color 0.2s;
+      min-height: 60px;
+      outline: none;
+      transition: border-color 0.15s;
     }
-    .sql-box:focus { border-color: var(--green); }
-    .sql-box::placeholder { color: var(--text-dim); }
+    .sqlin:focus { border-color: var(--text); }
+    .sqlin::placeholder { color: var(--text-light); }
 
-    .btn-strip {
+    .btns {
       display: flex;
       gap: 8px;
-      margin-top: 10px;
+      margin-top: 12px;
     }
-    .btn {
-      font-family: 'Outfit', sans-serif;
+    .b {
+      font-family: 'Space Grotesk', sans-serif;
       font-size: 12px;
-      font-weight: 600;
+      font-weight: 700;
       letter-spacing: 0.5px;
-      padding: 7px 18px;
-      border: none;
+      padding: 8px 20px;
+      border: 2px solid;
       cursor: pointer;
-      transition: all 0.15s;
+      transition: all 0.12s;
       text-transform: uppercase;
     }
-    .btn-go {
-      background: var(--green);
-      color: #0B1222;
+    .b-go {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
     }
-    .btn-go:hover { background: #00FF9D; transform: translateY(-1px); }
-    .btn-go.read-btn {
-      background: var(--cyan);
+    .b-go:hover { background: #9E3A20; border-color: #9E3A20; }
+    .b-read {
+      background: var(--teal);
+      color: #fff;
+      border-color: var(--teal);
     }
-    .btn-go.read-btn:hover { background: #33D4FF; }
-    .btn-clr {
+    .b-read:hover { background: #146358; border-color: #146358; }
+    .b-x {
       background: transparent;
-      color: var(--text-dim);
-      border: 1px solid var(--border);
+      color: var(--text-light);
+      border-color: var(--border);
     }
-    .btn-clr:hover { border-color: var(--border-hi); color: var(--text); }
+    .b-x:hover { border-color: var(--text-mid); color: var(--text-mid); }
 
     /* ── Response ── */
-    .resp {
+    .rsp {
       margin-top: 10px;
-      font-family: 'Fira Code', monospace;
-      font-size: 12px;
+      font-family: 'Space Mono', monospace;
+      font-size: 11px;
       padding: 8px 12px;
+      border-left: 3px solid;
       display: none;
     }
-    .resp.ok { display: block; background: var(--green-dim); color: var(--green); border-left: 3px solid var(--green); }
-    .resp.err { display: block; background: var(--red-dim); color: var(--red); border-left: 3px solid var(--red); }
+    .rsp.ok { display: block; background: var(--teal-light); color: var(--teal); border-color: var(--teal); }
+    .rsp.er { display: block; background: var(--err-light); color: var(--err); border-color: var(--err); }
 
     /* ── Table ── */
-    .tbl-wrap {
-      margin-top: 10px;
-      max-height: 280px;
+    .tw {
+      margin-top: 12px;
+      max-height: 260px;
       overflow-y: auto;
     }
-    .tbl-wrap table {
-      width: 100%;
-      border-collapse: collapse;
-    }
-    .tbl-wrap th {
+    .tw table { width: 100%; border-collapse: collapse; }
+    .tw th {
       text-align: left;
       padding: 6px 10px;
+      font-family: 'Space Mono', monospace;
       font-size: 9px;
-      font-weight: 600;
+      font-weight: 700;
       letter-spacing: 1.5px;
       text-transform: uppercase;
-      color: var(--text-dim);
-      border-bottom: 1px solid var(--border);
+      color: var(--text-light);
+      border-bottom: 2px solid var(--text);
+      background: var(--bg-alt);
       position: sticky;
       top: 0;
-      background: var(--bg-raised);
     }
-    .tbl-wrap td {
-      padding: 6px 10px;
-      font-family: 'Fira Code', monospace;
+    .tw td {
+      padding: 7px 10px;
+      font-family: 'Space Mono', monospace;
       font-size: 12px;
-      border-bottom: 1px solid rgba(28, 46, 69, 0.5);
-      color: var(--text);
+      border-bottom: 1px solid var(--border);
     }
-    .tbl-wrap tr:hover td { background: rgba(0, 230, 138, 0.03); }
-    .tbl-empty {
+    .tw tr:hover td { background: var(--accent-light); }
+    .tw-empty {
       text-align: center;
-      padding: 20px;
-      color: var(--text-dim);
+      padding: 24px;
+      color: var(--text-light);
       font-size: 12px;
+      font-style: italic;
     }
 
     /* ── Log ── */
-    .logbox {
-      background: var(--bg-raised);
-      border: 1px solid var(--border);
-      padding: 16px 18px;
+    .logwrap {
+      background: var(--surface);
+      border: 2px solid var(--text);
+      padding: 18px 20px;
     }
-    .log-scroll {
-      max-height: 180px;
+    .logscroll {
+      max-height: 160px;
       overflow-y: auto;
-      font-family: 'Fira Code', monospace;
-      font-size: 11px;
-      line-height: 1.9;
+      font-family: 'Space Mono', monospace;
+      font-size: 10px;
+      line-height: 2;
     }
-    .log-line { color: var(--text-dim); }
-    .log-line .lt { color: #3D5A80; margin-right: 8px; }
-    .log-line.ok { color: var(--green); }
-    .log-line.err { color: var(--red); }
-    .log-line.inf { color: var(--cyan); }
+    .ll { color: var(--text-light); }
+    .ll .t { color: var(--border-dark); margin-right: 10px; }
+    .ll.ok { color: var(--teal); }
+    .ll.er { color: var(--err); }
+    .ll.in { color: var(--slate); }
 
-    /* scrollbar */
-    ::-webkit-scrollbar { width: 3px; }
-    ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: var(--border); }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: var(--bg-alt); }
+    ::-webkit-scrollbar-thumb { background: var(--border-dark); }
   </style>
 </head>
 <body>
-  <div class="topbar">
-    <div class="topbar-left">
-      <div class="brand">TITAN</div>
-      <div class="brand-sep"></div>
-      <div class="brand-sub">Distributed SQLite</div>
+  <div class="hdr">
+    <div class="hdr-left">
+      <span class="hdr-name">Titan</span>
+      <span class="hdr-tag">v0.1 · distributed sqlite</span>
     </div>
-    <div class="cluster-pill">
-      <div class="led" id="led"></div>
-      <span id="clusterInfo">connecting...</span>
+    <div class="hdr-status">
+      <div class="dot" id="dot"></div>
+      <span id="cInfo">connecting</span>
     </div>
   </div>
 
   <div class="shell">
-    <div class="section-label">Cluster Nodes</div>
-    <div class="node-row" id="nodeRow"></div>
+    <div class="sec">Cluster</div>
+    <div class="nodes" id="nRow"></div>
 
-    <div class="panel-grid">
-      <div class="panel">
-        <div class="panel-head">Write</div>
-        <div class="sql-wrap">
-          <textarea class="sql-box" id="wSql" placeholder="INSERT INTO demo (msg) VALUES ('hello')"></textarea>
+    <div class="cols">
+      <div class="box">
+        <div class="box-title">Write</div>
+        <textarea class="sqlin" id="wSql" placeholder="INSERT INTO demo (msg) VALUES ('hello')"></textarea>
+        <div class="btns">
+          <button class="b b-go" onclick="doWrite()">Execute</button>
+          <button class="b b-x" onclick="document.getElementById('wSql').value=''">Clear</button>
         </div>
-        <div class="btn-strip">
-          <button class="btn btn-go" onclick="doWrite()">Execute</button>
-          <button class="btn btn-clr" onclick="document.getElementById('wSql').value=''">Clear</button>
-        </div>
-        <div class="resp" id="wResp"></div>
+        <div class="rsp" id="wR"></div>
       </div>
-      <div class="panel">
-        <div class="panel-head">Read</div>
-        <div class="sql-wrap">
-          <textarea class="sql-box" id="rSql" placeholder="SELECT * FROM demo"></textarea>
+      <div class="box">
+        <div class="box-title">Read</div>
+        <textarea class="sqlin" id="rSql" placeholder="SELECT * FROM demo"></textarea>
+        <div class="btns">
+          <button class="b b-read" onclick="doRead()">Query</button>
+          <button class="b b-x" onclick="document.getElementById('rSql').value=''">Clear</button>
         </div>
-        <div class="btn-strip">
-          <button class="btn btn-go read-btn" onclick="doRead()">Query</button>
-          <button class="btn btn-clr" onclick="document.getElementById('rSql').value=''">Clear</button>
-        </div>
-        <div class="tbl-wrap" id="rResults"></div>
+        <div class="tw" id="rR"></div>
       </div>
     </div>
 
-    <div class="section-label">Event Log</div>
-    <div class="logbox">
-      <div class="log-scroll" id="logBox"></div>
+    <div class="sec">Log</div>
+    <div class="logwrap">
+      <div class="logscroll" id="log"></div>
     </div>
   </div>
 
   <script>
-    const PORTS = [8001, 8002, 8003];
+    const P = [8001, 8002, 8003];
 
-    function lg(msg, type = '') {
-      const el = document.getElementById('logBox');
-      const t = new Date().toLocaleTimeString('en-US', {hour12: false, hour:'2-digit', minute:'2-digit', second:'2-digit'});
-      el.innerHTML = `<div class="log-line ${type}"><span class="lt">${t}</span>${msg}</div>` + el.innerHTML;
-      if (el.children.length > 80) el.removeChild(el.lastChild);
+    function lg(m, c = '') {
+      const el = document.getElementById('log');
+      const t = new Date().toLocaleTimeString('en-GB');
+      el.innerHTML = `<div class="ll ${c}"><span class="t">${t}</span>${m}</div>` + el.innerHTML;
+      if (el.children.length > 60) el.removeChild(el.lastChild);
     }
 
-    async function getStatus(port) {
+    async function stat(p) {
       try {
-        const r = await fetch(`http://127.0.0.1:${port}/status`, {signal: AbortSignal.timeout(1500)});
+        const r = await fetch(`http://127.0.0.1:${p}/status`, {signal: AbortSignal.timeout(1500)});
         return await r.json();
       } catch { return null; }
     }
 
-    async function findLeader() {
-      for (const p of PORTS) {
-        const s = await getStatus(p);
-        if (s && s.role === 'Leader') return p;
-      }
+    async function leader() {
+      for (const p of P) { const s = await stat(p); if (s?.role === 'Leader') return p; }
       return null;
     }
 
-    function renderNode(s) {
-      if (!s) return '';
+    function ndHTML(s) {
       const r = s.role.toLowerCase();
-      return `<div class="node is-${r}">
-        <div class="node-top">
-          <span class="node-id">NODE-${s.node_id}</span>
-          <span class="node-role ${r}">${s.role === 'Leader' ? '● ' : ''}${s.role}</span>
+      return `<div class="nd is-${r}">
+        <div class="nd-top">
+          <span class="nd-id">#${s.node_id}</span>
+          <span class="nd-role ${r}">${s.role}</span>
         </div>
-        <div class="node-grid">
-          <div class="ng-item"><span class="ng-label">Term</span><span class="ng-val">${s.term}</span></div>
-          <div class="ng-item"><span class="ng-label">Committed</span><span class="ng-val">${s.commit_index}</span></div>
-          <div class="ng-item"><span class="ng-label">Applied</span><span class="ng-val">${s.last_applied}</span></div>
-          <div class="ng-item"><span class="ng-label">Log Len</span><span class="ng-val">${s.log_length}</span></div>
-          <div class="ng-item"><span class="ng-label">UDP</span><span class="ng-val">${s.udp_port}</span></div>
-          <div class="ng-item"><span class="ng-label">HTTP</span><span class="ng-val">${s.http_port}</span></div>
+        <div class="nd-stats">
+          <div class="ns"><span class="ns-k">Term</span><span class="ns-v">${s.term}</span></div>
+          <div class="ns"><span class="ns-k">Commit</span><span class="ns-v">${s.commit_index}</span></div>
+          <div class="ns"><span class="ns-k">Applied</span><span class="ns-v">${s.last_applied}</span></div>
+          <div class="ns"><span class="ns-k">Log</span><span class="ns-v">${s.log_length}</span></div>
+          <div class="ns"><span class="ns-k">UDP</span><span class="ns-v">${s.udp_port}</span></div>
+          <div class="ns"><span class="ns-k">HTTP</span><span class="ns-v">${s.http_port}</span></div>
         </div>
+        <div class="nd-bar"></div>
       </div>`;
     }
 
-    function renderOffline(port) {
-      return `<div class="node is-offline">
-        <div class="node-top">
-          <span class="node-id">NODE-?</span>
-          <span class="node-role offline">Offline</span>
+    function offHTML(p) {
+      return `<div class="nd is-offline">
+        <div class="nd-top">
+          <span class="nd-id">:${p}</span>
+          <span class="nd-role offline">Offline</span>
         </div>
-        <div class="node-grid">
-          <div class="ng-item"><span class="ng-label">Port</span><span class="ng-val">${port}</span></div>
-        </div>
+        <div class="nd-stats"><div class="ns"><span class="ns-k">Status</span><span class="ns-v">—</span></div></div>
+        <div class="nd-bar"></div>
       </div>`;
     }
 
     async function poll() {
-      let html = '';
-      let online = 0;
-      let leader = null;
-      for (const p of PORTS) {
-        const s = await getStatus(p);
-        if (s) {
-          html += renderNode(s);
-          online++;
-          if (s.role === 'Leader') leader = s;
-        } else {
-          html += renderOffline(p);
-        }
+      let h = '', on = 0, ldr = null;
+      for (const p of P) {
+        const s = await stat(p);
+        if (s) { h += ndHTML(s); on++; if (s.role === 'Leader') ldr = s; }
+        else h += offHTML(p);
       }
-      document.getElementById('nodeRow').innerHTML = html;
-      const led = document.getElementById('led');
-      const info = document.getElementById('clusterInfo');
-      if (online === 0) {
-        led.className = 'led';
-        info.textContent = 'offline';
-      } else {
-        led.className = 'led on';
-        info.textContent = `${online}/3 online` + (leader ? ` — leader: node-${leader.node_id}` : ' — electing...');
-      }
+      document.getElementById('nRow').innerHTML = h;
+      document.getElementById('dot').className = 'dot' + (on ? ' on' : '');
+      document.getElementById('cInfo').textContent = on ? `${on}/3 online` + (ldr ? ` · leader #${ldr.node_id}` : ' · election') : 'offline';
     }
 
     async function doWrite() {
       const sql = document.getElementById('wSql').value.trim();
       if (!sql) return;
-      const resp = document.getElementById('wResp');
-      lg(`exec → ${sql}`, 'inf');
+      const r = document.getElementById('wR');
+      lg(`write → ${sql}`, 'in');
 
-      const lp = await findLeader();
-      if (!lp) {
-        resp.textContent = 'ERR: no leader found';
-        resp.className = 'resp err';
-        lg('no leader in cluster', 'err');
-        return;
-      }
-      lg(`routing to leader :${lp}`, 'inf');
+      const lp = await leader();
+      if (!lp) { r.textContent = 'No leader found'; r.className = 'rsp er'; lg('no leader', 'er'); return; }
+      lg(`→ leader :${lp}`, 'in');
 
       try {
-        const r = await fetch(`http://127.0.0.1:${lp}/execute`, {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
+        const res = await fetch(`http://127.0.0.1:${lp}/execute`, {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({sql}),
         });
-        const d = await r.json();
-        resp.textContent = d.message;
-        resp.className = 'resp ' + (d.success ? 'ok' : 'err');
-        lg(d.message, d.success ? 'ok' : 'err');
+        const d = await res.json();
+        r.textContent = d.message;
+        r.className = 'rsp ' + (d.success ? 'ok' : 'er');
+        lg(d.message, d.success ? 'ok' : 'er');
       } catch (e) {
-        resp.textContent = 'connection failed';
-        resp.className = 'resp err';
-        lg('connection failed: ' + e.message, 'err');
+        r.textContent = 'failed'; r.className = 'rsp er';
+        lg(e.message, 'er');
       }
       setTimeout(poll, 400);
     }
@@ -509,41 +470,36 @@
     async function doRead() {
       const sql = document.getElementById('rSql').value.trim();
       if (!sql) return;
-      const box = document.getElementById('rResults');
-      lg(`query → ${sql}`, 'inf');
-
-      const base = window.location.origin;
+      const box = document.getElementById('rR');
+      lg(`read → ${sql}`, 'in');
       try {
-        const r = await fetch(`${base}/query?sql=${encodeURIComponent(sql)}`);
-        const d = await r.json();
-        if (!d.success) { box.innerHTML = `<div class="resp err" style="display:block">${d.error}</div>`; lg(d.error, 'err'); return; }
-        if (!d.rows.length) { box.innerHTML = '<div class="tbl-empty">∅ empty result set</div>'; lg('0 rows', 'inf'); return; }
-
-        let h = '<table><tr>';
-        (d.columns.length ? d.columns : d.rows[0].map((_,i) => `col${i}`)).forEach(c => h += `<th>${c}</th>`);
-        h += '</tr>';
-        d.rows.forEach(row => { h += '<tr>' + row.map(v => `<td>${v}</td>`).join('') + '</tr>'; });
-        h += '</table>';
-        box.innerHTML = h;
+        const res = await fetch(`${window.location.origin}/query?sql=${encodeURIComponent(sql)}`);
+        const d = await res.json();
+        if (!d.success) { box.innerHTML = `<div class="rsp er" style="display:block">${d.error}</div>`; lg(d.error, 'er'); return; }
+        if (!d.rows.length) { box.innerHTML = '<div class="tw-empty">No rows</div>'; lg('0 rows', 'in'); return; }
+        let t = '<table><tr>';
+        (d.columns.length ? d.columns : d.rows[0].map((_,i) => i)).forEach(c => t += `<th>${c}</th>`);
+        t += '</tr>';
+        d.rows.forEach(row => { t += '<tr>' + row.map(v => `<td>${v}</td>`).join('') + '</tr>'; });
+        t += '</table>';
+        box.innerHTML = t;
         lg(`${d.rows.length} row(s)`, 'ok');
       } catch (e) {
-        box.innerHTML = `<div class="resp err" style="display:block">connection failed</div>`;
-        lg('query failed: ' + e.message, 'err');
+        box.innerHTML = `<div class="rsp er" style="display:block">failed</div>`;
+        lg(e.message, 'er');
       }
     }
 
-    // Keyboard shortcuts
     document.addEventListener('keydown', e => {
       if (e.ctrlKey && e.key === 'Enter') {
-        const active = document.activeElement;
-        if (active.id === 'wSql') doWrite();
-        else if (active.id === 'rSql') doRead();
+        if (document.activeElement?.id === 'wSql') doWrite();
+        else if (document.activeElement?.id === 'rSql') doRead();
       }
     });
 
     poll();
     setInterval(poll, 2000);
-    lg('dashboard initialized', 'inf');
+    lg('ready', 'ok');
   </script>
 </body>
 </html>
