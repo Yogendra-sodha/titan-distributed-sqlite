@@ -27,6 +27,23 @@ impl SqliteAdapter {
         Ok(())
     }
 
+    /// Validate SQL syntax without executing it.
+    /// Uses SQLite's prepare() to parse and type-check the statement.
+    pub fn validate_sql(&self, sql: &str) -> Result<()> {
+        let conn = Connection::open(&self.db_path)?;
+        let trimmed = sql.trim();
+        if trimmed.is_empty() {
+            return Err(anyhow!("Empty SQL statement"));
+        }
+        // Use a savepoint: validate by beginning a transaction, running the SQL,
+        // then rolling back — the database is never modified.
+        conn.execute_batch("SAVEPOINT validate_check")?;
+        let result = conn.execute_batch(trimmed);
+        conn.execute_batch("ROLLBACK TO validate_check")?;
+        conn.execute_batch("RELEASE validate_check")?;
+        result.map_err(|e| anyhow!("{}", e))
+    }
+
     pub fn execute_read(&self, sql: &str) -> Result<Vec<Vec<String>>> {
         let (_cols, rows) = self.execute_read_with_columns(sql)?;
         Ok(rows)

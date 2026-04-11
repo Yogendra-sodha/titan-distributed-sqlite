@@ -14,5 +14,8 @@ wal-replicator = { path = "../../crates/wal-replicator" }
 raft-core = { path = "../../crates/raft-core" }
 tokio = { version = "1", features = ["full"] }
 axum = "0.7"
+axum-server = { version = "0.7", features = ["tls-rustls"] }
 tower = "0.5"
 tower-http = { version = "0.6", features = ["cors"] }
+rcgen = "0.13"
+rustls-pemfile = "2"
