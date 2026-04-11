@@ -7,7 +7,7 @@ name = "titan-db"
 version = "0.1.0"
 description = "Python client for Titan Distributed SQLite"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 requires-python = ">=3.8"
 dependencies = ["requests>=2.28"]
 
