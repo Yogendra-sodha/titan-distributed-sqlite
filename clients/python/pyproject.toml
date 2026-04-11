@@ -11,6 +11,9 @@ license = {text = "MIT"}
 requires-python = ">=3.8"
 dependencies = ["requests>=2.28"]
 
+[tool.setuptools]
+py-modules = ["titan_db"]
+
 [project.urls]
 Homepage = "https://github.com/Yogendra-sodha/titan-distributed-sqlite"
 Repository = "https://github.com/Yogendra-sodha/titan-distributed-sqlite"
