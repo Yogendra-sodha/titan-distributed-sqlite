@@ -1,8 +1,9 @@
 use anyhow::Result;
 use axum::{
     extract::{Query, State},
-    http::Method,
-    response::Html,
+    http::{Method, Request, StatusCode},
+    middleware::{self, Next},
+    response::{Html, IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
@@ -27,6 +28,8 @@ struct SharedState {
     node_id: u64,
     /// Pending write confirmations: log_index → oneshot sender
     pending_confirms: Mutex<HashMap<u64, oneshot::Sender<WriteConfirmation>>>,
+    /// API key for authentication (None = no auth required)
+    api_key: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -44,6 +47,13 @@ struct ExecuteRequest {
     wait_for_commit: bool,
 }
 
+#[derive(Deserialize)]
+struct TransactionRequest {
+    statements: Vec<String>,
+    #[serde(default = "default_true")]
+    wait_for_commit: bool,
+}
+
 fn default_true() -> bool {
     true
 }
@@ -53,6 +63,14 @@ struct ExecuteResponse {
     success: bool,
     message: String,
     log_index: Option<u64>,
+    committed: bool,
+}
+
+#[derive(Serialize)]
+struct TransactionResponse {
+    success: bool,
+    message: String,
+    log_indices: Vec<u64>,
     committed: bool,
 }
 
@@ -81,6 +99,7 @@ struct StatusResponse {
     udp_port: u64,
     http_port: u64,
     persistent_state: bool,
+    auth_enabled: bool,
 }
 
 // ── Main ──
@@ -130,11 +149,16 @@ fn run_server(id: u64, peers: Vec<RaftNodeId>) -> Result<()> {
     let http_port = 8000 + id;
     let udp_port = 5000 + id;
 
+    // ── API Key Authentication ──
+    let api_key = env::var("TITAN_API_KEY").ok();
+    let auth_status = if api_key.is_some() { "ENABLED" } else { "DISABLED (set TITAN_API_KEY to enable)" };
+
     tracing::info!("===================================");
     tracing::info!("🚀 Starting Titan Node {} ", id);
     tracing::info!("📡 Peers: {:?}", peers.iter().map(|p| p.0).collect::<Vec<_>>());
     tracing::info!("🌐 UDP Raft port: {}", udp_port);
     tracing::info!("🌐 HTTP API port: {}", http_port);
+    tracing::info!("🔐 Auth: {}", auth_status);
     tracing::info!("===================================");
 
     // Ensure data directory exists
@@ -177,6 +201,7 @@ fn run_server(id: u64, peers: Vec<RaftNodeId>) -> Result<()> {
         db: Mutex::new(db_adapter),
         node_id: id,
         pending_confirms: Mutex::new(HashMap::new()),
+        api_key,
     });
 
     // ── Spawn the UDP Raft loop in a background thread ──
@@ -192,22 +217,62 @@ fn run_server(id: u64, peers: Vec<RaftNodeId>) -> Result<()> {
         let cors = tower_http::cors::CorsLayer::new()
             .allow_origin(tower_http::cors::Any)
             .allow_methods([Method::GET, Method::POST])
-            .allow_headers([axum::http::header::CONTENT_TYPE]);
+            .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::AUTHORIZATION]);
 
+        let shared_for_auth = Arc::clone(&shared);
         let app = Router::new()
             .route("/", get(handle_dashboard))
             .route("/execute", post(handle_execute))
             .route("/query", get(handle_query))
+            .route("/transaction", post(handle_transaction))
             .route("/status", get(handle_status))
+            .layer(middleware::from_fn(move |req, next| {
+                auth_middleware(Arc::clone(&shared_for_auth), req, next)
+            }))
             .layer(cors)
             .with_state(Arc::clone(&shared));
 
-        let listener = TcpListener::bind(format!("0.0.0.0:{}", http_port))
+        // Check if TLS is enabled
+        let tls_enabled = env::var("TITAN_TLS").unwrap_or_default() == "1";
+
+        if tls_enabled {
+            // Generate or load self-signed certificates
+            let cert_path = "./data/cert.pem";
+            let key_path = "./data/key.pem";
+
+            if !std::path::Path::new(cert_path).exists() {
+                tracing::info!("🔒 Generating self-signed TLS certificate...");
+                let cert = rcgen::generate_simple_self_signed(vec![
+                    "localhost".to_string(),
+                    "127.0.0.1".to_string(),
+                ]).expect("Failed to generate certificate");
+
+                fs::write(cert_path, cert.cert.pem()).expect("Failed to write cert.pem");
+                fs::write(key_path, cert.key_pair.serialize_pem()).expect("Failed to write key.pem");
+                tracing::info!("🔒 Certificate saved to {} and {}", cert_path, key_path);
+            }
+
+            let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert_path, key_path)
+                .await
+                .expect("Failed to load TLS certificates");
+
+            tracing::info!("🔒 HTTPS API live at https://127.0.0.1:{}", http_port);
+
+            axum_server::bind_rustls(
+                format!("0.0.0.0:{}", http_port).parse().unwrap(),
+                tls_config,
+            )
+            .serve(app.into_make_service())
             .await
             .unwrap();
+        } else {
+            let listener = TcpListener::bind(format!("0.0.0.0:{}", http_port))
+                .await
+                .unwrap();
 
-        tracing::info!("🌐 HTTP API live at http://127.0.0.1:{}", http_port);
-        axum::serve(listener, app).await.unwrap();
+            tracing::info!("🌐 HTTP API live at http://127.0.0.1:{}", http_port);
+            axum::serve(listener, app).await.unwrap();
+        }
     });
 
     Ok(())
@@ -303,16 +368,80 @@ fn run_raft_loop(id: u64, shared: Arc<SharedState>, recovered_last_applied: u64)
     }
 }
 
+// ── Auth Middleware ──
+
+async fn auth_middleware(
+    shared: Arc<SharedState>,
+    req: Request<axum::body::Body>,
+    next: Next,
+) -> Response {
+    // Always allow: GET /status (for health checks), GET / (dashboard)
+    let path = req.uri().path().to_string();
+    if path == "/" || path == "/status" {
+        return next.run(req).await;
+    }
+
+    // If no API key is configured, allow everything
+    let api_key = match &shared.api_key {
+        Some(key) => key.clone(),
+        None => return next.run(req).await,
+    };
+
+    // Check Authorization header: "Bearer <key>"
+    let auth_header = req
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if auth_header == format!("Bearer {}", api_key) {
+        return next.run(req).await;
+    }
+
+    // Also accept ?api_key=<key> query param (for curl convenience)
+    if let Some(query) = req.uri().query() {
+        if query.contains(&format!("api_key={}", api_key)) {
+            return next.run(req).await;
+        }
+    }
+
+    (StatusCode::UNAUTHORIZED, Json(serde_json::json!({
+        "success": false,
+        "message": "Unauthorized. Provide Authorization: Bearer <key> header or ?api_key=<key> param."
+    }))).into_response()
+}
+
 // ── HTTP Handlers ──
 
 async fn handle_dashboard() -> Html<&'static str> {
     Html(include_str!("../static/index.html"))
 }
 
+/// Validate SQL syntax by attempting to prepare the statement.
+/// Returns Ok(()) if valid, Err(message) if invalid.
+fn validate_sql(db: &SqliteAdapter, sql: &str) -> std::result::Result<(), String> {
+    // Use the read connection to just prepare (not execute) the statement
+    // This catches syntax errors without modifying data
+    db.validate_sql(sql).map_err(|e| format!("SQL syntax error: {}", e))
+}
+
 async fn handle_execute(
     State(shared): State<Arc<SharedState>>,
     Json(req): Json<ExecuteRequest>,
 ) -> Json<ExecuteResponse> {
+    // Validate SQL syntax before sending through Raft
+    {
+        let db = shared.db.lock().unwrap();
+        if let Err(e) = validate_sql(&db, &req.sql) {
+            return Json(ExecuteResponse {
+                success: false,
+                message: e,
+                log_index: None,
+                committed: false,
+            });
+        }
+    }
+
     let (log_index, rx) = {
         let mut node = shared.node.lock().unwrap();
 
@@ -416,6 +545,107 @@ async fn handle_query(
     }
 }
 
+async fn handle_transaction(
+    State(shared): State<Arc<SharedState>>,
+    Json(req): Json<TransactionRequest>,
+) -> Json<TransactionResponse> {
+    if req.statements.is_empty() {
+        return Json(TransactionResponse {
+            success: false,
+            message: "No statements provided".to_string(),
+            log_indices: vec![],
+            committed: false,
+        });
+    }
+
+    // Validate ALL statements first
+    {
+        let db = shared.db.lock().unwrap();
+        for (i, sql) in req.statements.iter().enumerate() {
+            if let Err(e) = validate_sql(&db, sql) {
+                return Json(TransactionResponse {
+                    success: false,
+                    message: format!("Statement {} failed validation: {}", i + 1, e),
+                    log_indices: vec![],
+                    committed: false,
+                });
+            }
+        }
+    }
+
+    // Wrap all statements in BEGIN/COMMIT and send as single Raft entry
+    let mut wrapped = String::from("BEGIN TRANSACTION;\n");
+    for sql in &req.statements {
+        wrapped.push_str(sql.trim_end_matches(';'));
+        wrapped.push_str(";\n");
+    }
+    wrapped.push_str("COMMIT;");
+
+    let (log_index, rx) = {
+        let mut node = shared.node.lock().unwrap();
+
+        if node.role != Role::Leader {
+            return Json(TransactionResponse {
+                success: false,
+                message: format!("This node is not the Leader. Current role: {:?}.", node.role),
+                log_indices: vec![],
+                committed: false,
+            });
+        }
+
+        match node.append_local_entry(wrapped.as_bytes().to_vec()) {
+            Some(idx) => {
+                if req.wait_for_commit {
+                    let (tx, rx) = oneshot::channel();
+                    shared.pending_confirms.lock().unwrap().insert(idx, tx);
+                    (idx, Some(rx))
+                } else {
+                    (idx, None)
+                }
+            }
+            None => {
+                return Json(TransactionResponse {
+                    success: false,
+                    message: "Failed to append entry.".to_string(),
+                    log_indices: vec![],
+                    committed: false,
+                });
+            }
+        }
+    };
+
+    if rx.is_none() {
+        return Json(TransactionResponse {
+            success: true,
+            message: format!("Transaction ({} statements) accepted at log index {}", req.statements.len(), log_index),
+            log_indices: vec![log_index],
+            committed: false,
+        });
+    }
+
+    let rx = rx.unwrap();
+    match tokio::time::timeout(Duration::from_secs(5), rx).await {
+        Ok(Ok(confirmation)) => Json(TransactionResponse {
+            success: true,
+            message: format!("Transaction ({} statements) committed at log index {}", req.statements.len(), confirmation.log_index),
+            log_indices: vec![confirmation.log_index],
+            committed: true,
+        }),
+        Ok(Err(_)) => Json(TransactionResponse {
+            success: true,
+            message: "Transaction accepted but confirmation channel dropped.".to_string(),
+            log_indices: vec![log_index],
+            committed: false,
+        }),
+        Err(_) => Json(TransactionResponse {
+            success: true,
+            message: "Transaction accepted but commit timed out.".to_string(),
+            log_indices: vec![log_index],
+            committed: false,
+        }),
+    }
+}
+
 async fn handle_status(
     State(shared): State<Arc<SharedState>>,
 ) -> Json<StatusResponse> {
@@ -437,6 +667,7 @@ async fn handle_status(
         udp_port: 5000 + shared.node_id,
         http_port: 8000 + shared.node_id,
         persistent_state: true,
+        auth_enabled: shared.api_key.is_some(),
     })
 }
 
