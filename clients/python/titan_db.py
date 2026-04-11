@@ -37,16 +37,20 @@ class TitanClient:
         timeout: Request timeout in seconds (default: 5)
     """
 
-    def __init__(self, nodes: List[str], timeout: float = 5.0):
+    def __init__(self, nodes: List[str], timeout: float = 5.0, api_key: Optional[str] = None):
         self.nodes = [url.rstrip("/") for url in nodes]
         self.timeout = timeout
+        self.api_key = api_key
         self._leader_url: Optional[str] = None
+        self._session = requests.Session()
+        if self.api_key:
+            self._session.headers.update({"Authorization": f"Bearer {self.api_key}"})
 
     def _find_leader(self) -> str:
         """Poll all nodes to find the current Leader."""
         for url in self.nodes:
             try:
-                r = requests.get(f"{url}/status", timeout=self.timeout)
+                r = self._session.get(f"{url}/status", timeout=self.timeout)
                 data = r.json()
                 if data.get("role") == "Leader":
                     self._leader_url = url
@@ -58,9 +62,8 @@ class TitanClient:
     def _get_leader(self) -> str:
         """Return cached leader URL, or discover it."""
         if self._leader_url:
-            # Verify it's still the leader
             try:
-                r = requests.get(f"{self._leader_url}/status", timeout=self.timeout)
+                r = self._session.get(f"{self._leader_url}/status", timeout=self.timeout)
                 if r.json().get("role") == "Leader":
                     return self._leader_url
             except (requests.ConnectionError, requests.Timeout):
@@ -68,42 +71,32 @@ class TitanClient:
         return self._find_leader()
 
     def _get_any_node(self) -> str:
-        """Return any reachable node URL (for reads)."""
+        """Return any reachable node URL."""
         for url in self.nodes:
             try:
-                requests.get(f"{url}/status", timeout=self.timeout)
+                self._session.get(f"{url}/status", timeout=self.timeout)
                 return url
             except (requests.ConnectionError, requests.Timeout):
                 continue
         raise TitanError("No nodes reachable. Is the cluster running?")
 
     def execute(self, sql: str) -> Dict[str, Any]:
-        """Execute a write SQL statement (INSERT, CREATE, UPDATE, DELETE).
-
-        The statement is sent to the Leader and replicated via Raft consensus.
-
-        Args:
-            sql: The SQL statement to execute.
-
-        Returns:
-            Dict with 'success', 'message', and 'log_index' keys.
-
-        Raises:
-            TitanError: If no leader is found or the operation fails.
-        """
+        """Execute a write SQL statement (INSERT, CREATE, UPDATE, DELETE)."""
         leader = self._get_leader()
         try:
-            r = requests.post(
+            r = self._session.post(
                 f"{leader}/execute",
                 json={"sql": sql},
                 timeout=self.timeout,
             )
             data = r.json()
             if not data.get("success"):
+                if r.status_code == 401:
+                    raise TitanError("Unauthorized: Check your API key")
                 # Leader may have changed — retry once
                 self._leader_url = None
                 leader = self._find_leader()
-                r = requests.post(
+                r = self._session.post(
                     f"{leader}/execute",
                     json={"sql": sql},
                     timeout=self.timeout,
@@ -116,30 +109,38 @@ class TitanClient:
             self._leader_url = None
             raise TitanError(f"Connection failed to {leader}")
 
+    def transaction(self, statements: List[str]) -> Dict[str, Any]:
+        """Execute multiple SQL statements sequentially in a single atomic transaction."""
+        leader = self._get_leader()
+        try:
+            r = self._session.post(
+                f"{leader}/transaction",
+                json={"statements": statements},
+                timeout=self.timeout,
+            )
+            data = r.json()
+            if not data.get("success"):
+                if r.status_code == 401:
+                    raise TitanError("Unauthorized: Check your API key")
+                raise TitanError(data.get("message", "Transaction failed"))
+            return data
+        except requests.ConnectionError:
+            self._leader_url = None
+            raise TitanError(f"Connection failed to {leader}")
+
     def query(self, sql: str, node_url: Optional[str] = None) -> List[Dict[str, str]]:
-        """Execute a read SQL query and return results as a list of dicts.
-
-        Reads are performed locally on any node (no consensus needed).
-
-        Args:
-            sql: The SQL query to execute (SELECT ...).
-            node_url: Optional specific node URL to query. If None, uses any reachable node.
-
-        Returns:
-            List of dicts, one per row, with column names as keys.
-
-        Raises:
-            TitanError: If the query fails or no nodes are reachable.
-        """
+        """Execute a read SQL query and return results as a list of dicts."""
         url = node_url or self._get_any_node()
         try:
-            r = requests.get(
+            r = self._session.get(
                 f"{url}/query",
                 params={"sql": sql},
                 timeout=self.timeout,
             )
             data = r.json()
             if not data.get("success"):
+                if r.status_code == 401:
+                    raise TitanError("Unauthorized: Check your API key")
                 raise TitanError(data.get("error", "Query failed"))
 
             columns = data.get("columns", [])
