@@ -1,21 +1,28 @@
-"""
-Titan DB — Python client for Titan Distributed SQLite.
+"""Titan DB — Python client for Titan Distributed SQLite.
 
-Usage:
-    from titan_db import TitanClient
+IMPORTANT: This is a CLIENT LIBRARY only. You must have a Titan cluster
+running separately before using this client. titan-db connects to an
+already-running Titan Distributed SQLite server over HTTP.
 
-    db = TitanClient(["http://127.0.0.1:8001", "http://127.0.0.1:8002", "http://127.0.0.1:8003"])
+Quick Start:
+    1. Clone and build the server:
+       git clone https://github.com/Yogendra-sodha/titan-distributed-sqlite.git
+       cd titan-distributed-sqlite
+       cargo build --release
 
-    db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)")
-    db.execute("INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')")
+    2. Start a 3-node cluster (in 3 separate terminals):
+       cargo run --release --bin titan-node -- run 1 2,3
+       cargo run --release --bin titan-node -- run 2 1,3
+       cargo run --release --bin titan-node -- run 3 1,2
 
-    rows = db.query("SELECT * FROM users")
-    print(rows)
-    # [{'id': '1', 'name': 'Alice', 'email': 'alice@example.com'}]
+    3. Now use this client:
+       from titan_db import TitanClient
+       db = TitanClient(["http://127.0.0.1:8001", "http://127.0.0.1:8002", "http://127.0.0.1:8003"])
+       db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+       db.execute("INSERT INTO users (name) VALUES ('Alice')")
+       print(db.query("SELECT * FROM users"))
 
-    status = db.status()
-    print(status)
-    # [{'node_id': 1, 'role': 'Leader', 'term': 5, ...}, ...]
+Server repo: https://github.com/Yogendra-sodha/titan-distributed-sqlite
 """
 
 import requests
@@ -48,6 +55,8 @@ class TitanClient:
 
     def _find_leader(self) -> str:
         """Poll all nodes to find the current Leader."""
+        reachable = []
+        unreachable = []
         for url in self.nodes:
             try:
                 r = self._session.get(f"{url}/status", timeout=self.timeout)
@@ -55,9 +64,38 @@ class TitanClient:
                 if data.get("role") == "Leader":
                     self._leader_url = url
                     return url
+                reachable.append((url, data.get("role", "Unknown")))
             except (requests.ConnectionError, requests.Timeout):
+                unreachable.append(url)
                 continue
-        raise TitanError("No leader found. Is the cluster running?")
+
+        # Build a helpful error message
+        if not reachable and unreachable:
+            raise TitanError(
+                f"No Titan nodes are reachable. Tried: {', '.join(unreachable)}\n"
+                f"\n"
+                f"titan-db is a CLIENT library — you need to start the Titan server first.\n"
+                f"\n"
+                f"Quick fix:\n"
+                f"  1. Clone: git clone https://github.com/Yogendra-sodha/titan-distributed-sqlite.git\n"
+                f"  2. Build: cd titan-distributed-sqlite && cargo build --release\n"
+                f"  3. Start: cargo run --release --bin titan-node -- run 1 2,3\n"
+                f"     (repeat with 'run 2 1,3' and 'run 3 1,2' in separate terminals)\n"
+                f"\n"
+                f"Docs: https://github.com/Yogendra-sodha/titan-distributed-sqlite#readme"
+            )
+        elif reachable:
+            roles = ', '.join(f"{url} ({role})" for url, role in reachable)
+            raise TitanError(
+                f"Nodes are reachable but no Leader has been elected yet.\n"
+                f"  Reachable nodes: {roles}\n"
+                f"  Unreachable nodes: {', '.join(unreachable) if unreachable else 'none'}\n"
+                f"\n"
+                f"This usually resolves within 1-2 seconds as Raft elects a leader.\n"
+                f"Try again shortly, or check that at least 2 of 3 nodes are running."
+            )
+        else:
+            raise TitanError("No nodes configured. Pass node URLs to TitanClient().")
 
     def _get_leader(self) -> str:
         """Return cached leader URL, or discover it."""
@@ -78,7 +116,12 @@ class TitanClient:
                 return url
             except (requests.ConnectionError, requests.Timeout):
                 continue
-        raise TitanError("No nodes reachable. Is the cluster running?")
+        raise TitanError(
+            f"No Titan nodes are reachable. Tried: {', '.join(self.nodes)}\n"
+            f"\n"
+            f"titan-db is a CLIENT library — you need to start the Titan server first.\n"
+            f"See: https://github.com/Yogendra-sodha/titan-distributed-sqlite#readme"
+        )
 
     def execute(self, sql: str) -> Dict[str, Any]:
         """Execute a write SQL statement (INSERT, CREATE, UPDATE, DELETE)."""
