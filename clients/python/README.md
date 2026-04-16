@@ -1,6 +1,6 @@
 # Titan DB — Python Client
 
-> **This is a client-only library.** It connects to an already-running [Titan Distributed SQLite](https://github.com/Yogendra-sodha/titan-distributed-sqlite) server cluster over HTTP. You must start the server separately before using this client.
+> **Zero-setup distributed SQLite.** Install with pip, start a fault-tolerant cluster with one command.
 
 ## Install
 
@@ -8,30 +8,33 @@
 pip install titan-db
 ```
 
-## Prerequisites — Start the Server First!
-
-Before using this client, you need the Titan server cluster running. Here's how:
+## Start the Server (One Command!)
 
 ```bash
-# 1. Clone and build the server (requires Rust)
-git clone https://github.com/Yogendra-sodha/titan-distributed-sqlite.git
-cd titan-distributed-sqlite
-cargo build --release
-
-# 2. Start 3 nodes (each in a separate terminal)
-cargo run --release --bin titan-node -- run 1 2,3   # Terminal 1
-cargo run --release --bin titan-node -- run 2 1,3   # Terminal 2
-cargo run --release --bin titan-node -- run 3 1,2   # Terminal 3
+titan-server start
 ```
 
-Once you see `🌐 HTTP API live at http://127.0.0.1:8001` in each terminal, the cluster is ready.
+This automatically:
+1. Downloads the correct `titan-node` binary for your OS (Windows/Mac/Linux)
+2. Starts a 3-node distributed cluster on localhost
+3. Prints the connection URLs
 
-## Usage
+To stop the cluster:
+```bash
+titan-server stop
+```
+
+To check health:
+```bash
+titan-server status
+```
+
+## Use the Client
 
 ```python
 from titan_db import TitanClient
 
-# Connect to the 3-node cluster
+# Connect to the cluster
 db = TitanClient([
     "http://127.0.0.1:8001",
     "http://127.0.0.1:8002",
@@ -41,52 +44,80 @@ db = TitanClient([
 # Write — automatically finds and routes to the Leader node
 db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)")
 db.execute("INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')")
-db.execute("INSERT INTO users (name, email) VALUES ('Bob', 'bob@example.com')")
 
 # Read — queries any reachable node
 rows = db.query("SELECT * FROM users")
-for row in rows:
-    print(row)
-# {'id': '1', 'name': 'Alice', 'email': 'alice@example.com'}
-# {'id': '2', 'name': 'Bob', 'email': 'bob@example.com'}
+print(rows)
+# [{'id': '1', 'name': 'Alice', 'email': 'alice@example.com'}]
 
 # Transactions — multiple statements, atomic
 db.transaction([
-    "INSERT INTO users (name, email) VALUES ('Charlie', 'charlie@test.com')",
-    "INSERT INTO users (name, email) VALUES ('Diana', 'diana@test.com')",
+    "INSERT INTO users (name, email) VALUES ('Bob', 'bob@example.com')",
+    "INSERT INTO users (name, email) VALUES ('Charlie', 'charlie@example.com')",
 ])
 
-# Authentication (if server has TITAN_API_KEY set)
+# Cluster health
+print(db.status())
+print(db.leader())
+```
+
+## Start the Server from Python
+
+You can also manage the cluster programmatically:
+
+```python
+from titan_db.server import TitanServer
+from titan_db import TitanClient
+
+# Use as a context manager — auto starts and stops
+with TitanServer() as server:
+    db = TitanClient(server.node_urls())
+    db.execute("CREATE TABLE test (id INTEGER PRIMARY KEY, value TEXT)")
+    db.execute("INSERT INTO test (value) VALUES ('hello distributed world!')")
+    print(db.query("SELECT * FROM test"))
+# Cluster automatically stops when the block exits
+```
+
+## Authentication
+
+If the server is started with `TITAN_API_KEY`, pass it to the client:
+
+```python
 db = TitanClient(
     nodes=["http://127.0.0.1:8001", "http://127.0.0.1:8002", "http://127.0.0.1:8003"],
     api_key="my_secret_key"
 )
-
-# Cluster health
-print(db.status())     # Status of all nodes
-print(db.leader())     # Current leader info
 ```
 
 ## API Reference
 
 | Method | Description |
 |--------|-------------|
-| `execute(sql)` | Write SQL — auto-routes to the Leader via Raft consensus |
-| `query(sql)` | Read SQL — returns list of dicts from any reachable node |
-| `transaction([sql1, sql2, ...])` | Atomic multi-statement transaction via Raft |
-| `status()` | Get status of all nodes |
-| `leader()` | Get current leader info |
+| `execute(sql)` | Write SQL — auto-routes to Leader via Raft |
+| `query(sql)` | Read SQL — returns list of dicts |
+| `transaction([...])` | Atomic multi-statement transaction |
+| `status()` | All nodes health |
+| `leader()` | Current leader info |
+
+## CLI Reference
+
+| Command | Description |
+|---------|-------------|
+| `titan-server start` | Download binary + start 3-node cluster |
+| `titan-server stop` | Stop all running nodes |
+| `titan-server status` | Check cluster health |
+| `titan-server download` | Just download the binary (no start) |
 
 ## Troubleshooting
 
 | Error | Cause | Fix |
 |-------|-------|-----|
-| `No Titan nodes are reachable` | Server cluster is not running | Start the 3 Titan nodes first (see Prerequisites above) |
-| `Nodes are reachable but no Leader elected` | Election in progress | Wait 1-2 seconds and retry. Ensure at least 2 of 3 nodes are running. |
-| `Unauthorized: Check your API key` | Server requires auth | Pass `api_key="..."` to `TitanClient()` |
-| `Connection failed to ...` | A node crashed mid-request | Client will auto-retry with the new leader on next call |
+| `No Titan nodes are reachable` | Cluster not running | Run `titan-server start` |
+| `Nodes reachable but no Leader` | Election in progress | Wait 1-2 seconds, retry |
+| `Binary not found for your platform` | No pre-built binary | Build from source (see error message) |
+| `Unauthorized` | API key required | Pass `api_key=` to TitanClient |
 
 ## Links
 
-- **Server Repository**: [github.com/Yogendra-sodha/titan-distributed-sqlite](https://github.com/Yogendra-sodha/titan-distributed-sqlite)
-- **Dashboard**: Open `http://127.0.0.1:8001/` in your browser when the cluster is running
+- **Repository**: [github.com/Yogendra-sodha/titan-distributed-sqlite](https://github.com/Yogendra-sodha/titan-distributed-sqlite)
+- **Dashboard**: Open `http://127.0.0.1:8001/` when the cluster is running
