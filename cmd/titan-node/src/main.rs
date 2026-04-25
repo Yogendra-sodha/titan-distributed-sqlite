@@ -759,3 +759,44 @@ fn run_parse_fixture(path: &str) -> Result<()> {
         Err(_) => Ok(()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_peers_simple_format() {
+        let (peers, addrs) = parse_peers("2,3");
+        assert_eq!(peers.len(), 2);
+        assert_eq!(peers[0], RaftNodeId(2));
+        assert_eq!(peers[1], RaftNodeId(3));
+        assert_eq!(addrs.get(&2).unwrap(), "127.0.0.1:5002");
+        assert_eq!(addrs.get(&3).unwrap(), "127.0.0.1:5003");
+    }
+
+    #[test]
+    fn test_parse_peers_address_format() {
+        let (peers, addrs) = parse_peers("2@10.0.1.11:5002,3@10.0.1.12:5003");
+        assert_eq!(peers.len(), 2);
+        assert_eq!(peers[0], RaftNodeId(2));
+        assert_eq!(peers[1], RaftNodeId(3));
+        assert_eq!(addrs.get(&2).unwrap(), "10.0.1.11:5002");
+        assert_eq!(addrs.get(&3).unwrap(), "10.0.1.12:5003");
+    }
+
+    #[test]
+    fn test_parse_peers_mixed_format() {
+        let (peers, addrs) = parse_peers("2,3@192.168.1.100:5003");
+        assert_eq!(peers.len(), 2);
+        assert_eq!(addrs.get(&2).unwrap(), "127.0.0.1:5002");
+        assert_eq!(addrs.get(&3).unwrap(), "192.168.1.100:5003");
+    }
+
+    #[test]
+    fn test_parse_peers_single_peer() {
+        let (peers, addrs) = parse_peers("1@10.0.0.5:5001");
+        assert_eq!(peers.len(), 1);
+        assert_eq!(peers[0], RaftNodeId(1));
+        assert_eq!(addrs.get(&1).unwrap(), "10.0.0.5:5001");
+    }
+}
