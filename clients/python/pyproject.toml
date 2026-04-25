@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "titan-db"
-version = "0.3.0"
+version = "0.3.2"
 description = "Python client & server manager for Titan Distributed SQLite"
 readme = "README.md"
 license = "MIT"
