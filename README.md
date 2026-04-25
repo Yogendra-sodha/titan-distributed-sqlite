@@ -161,9 +161,82 @@ curl -X POST http://127.0.0.1:8002/transaction \
 
 ---
 
+## 🌍 Multi-Server Deployment (3 Separate Machines)
+
+Titan supports true distributed deployment across multiple servers. Each node runs on its own machine with the new `id@ip:port` peer addressing format.
+
+### Example: 3 AWS EC2 Instances
+
+| Node | Server | Private IP | HTTP Port | UDP Port |
+|------|--------|-----------|-----------|----------|
+| 1 | EC2 us-east-1a | 10.0.1.10 | 8001 | 5001 |
+| 2 | EC2 us-east-1b | 10.0.1.11 | 8002 | 5002 |
+| 3 | EC2 us-east-1c | 10.0.1.12 | 8003 | 5003 |
+
+#### On Server 1 (10.0.1.10):
+```bash
+pip install titan-db
+titan-node run 1 2@10.0.1.11:5002,3@10.0.1.12:5003
+```
+
+#### On Server 2 (10.0.1.11):
+```bash
+pip install titan-db
+titan-node run 2 1@10.0.1.10:5001,3@10.0.1.12:5003
+```
+
+#### On Server 3 (10.0.1.12):
+```bash
+pip install titan-db
+titan-node run 3 1@10.0.1.10:5001,2@10.0.1.11:5002
+```
+
+#### Connect from your app (anywhere):
+```python
+from titan_db import TitanClient
+
+db = TitanClient([
+    "http://10.0.1.10:8001",
+    "http://10.0.1.11:8002",
+    "http://10.0.1.12:8003",
+])
+db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+```
+
+#### Security Group Rules (AWS):
+```
+Inbound:
+  TCP 8001-8003  → Your App IPs (HTTP API)
+  UDP 5001-5003  → Other Titan Nodes only (Raft consensus)
+  TCP 22         → Your IP (SSH)
+```
+
+#### Python Multi-Server API:
+```python
+from titan_server import TitanServer
+
+# On Server 1: start only this node
+server = TitanServer(
+    node_id=1,
+    peer_addresses={2: "10.0.1.11:5002", 3: "10.0.1.12:5003"}
+)
+server.start_node()
+```
+
+---
+
 ## 📂 Architecture & Code Structure
 
 *   `crates/raft-core`: The consensus engine. Handles Leader elections, term increments, network split-brain prevention, and robust disk persistence.
 *   `crates/sqlite-adapter`: Connects the state machine to local `.db` files via `rusqlite`.
 *   `cmd/titan-node`: The runtime executable wrapping Raft in a UDP thread and the HTTP API in a Tokio thread.
+*   `clients/python`: Python client library (`titan_db`) and server manager (`titan_server`).
 *   `data/`: Where persistent files rest (`titan_node_1.db` for actual data and `titan_node_1_raft.db` for consensus data).
+
+### Deployment Modes
+
+| Mode | Command | Use Case |
+|------|---------|----------|
+| **Local** | `titan-server start` or `titan-node run 1 2,3` | Development, testing |
+| **Multi-Server** | `titan-node run 1 2@ip:port,3@ip:port` | Production, true fault tolerance |
+
