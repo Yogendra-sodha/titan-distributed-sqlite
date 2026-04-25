@@ -141,23 +141,90 @@ def _download_binary(version: str = "latest") -> Path:
 
 
 class TitanServer:
-    """Manages a local Titan Distributed SQLite cluster.
+    """Manages a Titan Distributed SQLite cluster.
 
-    Example:
+    Local mode (all nodes on one machine):
         server = TitanServer(nodes=3)
         server.start()
-        # ... use TitanClient ...
-        server.stop()
+
+    Multi-server mode (this node + remote peers):
+        server = TitanServer(
+            node_id=1,
+            peer_addresses={2: "10.0.1.11:5002", 3: "10.0.1.12:5003"}
+        )
+        server.start_node()  # starts only THIS node
     """
 
-    def __init__(self, nodes: int = 3, base_http_port: int = 8000, base_udp_port: int = 5000):
+    def __init__(self, nodes: int = 3, base_http_port: int = 8000, base_udp_port: int = 5000,
+                 node_id: Optional[int] = None, peer_addresses: Optional[dict] = None):
         self.num_nodes = nodes
         self.base_http_port = base_http_port
         self.base_udp_port = base_udp_port
+        self.node_id = node_id
+        self.peer_addresses = peer_addresses or {}
         self._processes: List[subprocess.Popen] = []
 
+    def _build_peer_arg(self, node_id: int, all_node_ids: List[int]) -> str:
+        """Build the peer argument string for a node.
+
+        Returns either simple format '2,3' or address format '2@ip:port,3@ip:port'.
+        """
+        parts = []
+        for pid in all_node_ids:
+            if pid == node_id:
+                continue
+            if pid in self.peer_addresses:
+                parts.append(f"{pid}@{self.peer_addresses[pid]}")
+            else:
+                parts.append(str(pid))
+        return ",".join(parts)
+
+    def start_node(self, version: str = "latest", data_dir: Optional[str] = None,
+                   bind_addr: str = "0.0.0.0") -> str:
+        """Start a single Titan node (for multi-server deployment).
+
+        Args:
+            version: Which release version to use
+            data_dir: Directory for database files
+            bind_addr: Address to bind to (default: 0.0.0.0)
+
+        Returns:
+            This node's URL, e.g. "http://0.0.0.0:8001"
+        """
+        if self.node_id is None:
+            raise ValueError("node_id must be set for multi-server mode")
+
+        binary = _download_binary(version)
+        work_dir = Path(data_dir) if data_dir else DATA_DIR
+        work_dir.mkdir(parents=True, exist_ok=True)
+
+        all_ids = sorted(set([self.node_id] + list(self.peer_addresses.keys())))
+        peers_arg = self._build_peer_arg(self.node_id, all_ids)
+        cmd = [str(binary), "run", str(self.node_id), peers_arg, "--bind", bind_addr]
+
+        print(f"Starting Node {self.node_id} (multi-server mode)")
+        print(f"  HTTP: {bind_addr}:{self.base_http_port + self.node_id}")
+        print(f"  UDP:  {bind_addr}:{self.base_udp_port + self.node_id}")
+        print(f"  Peers: {peers_arg}")
+
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(work_dir),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0,
+        )
+        self._processes.append(proc)
+
+        PID_FILE.write_text(json.dumps([proc.pid]))
+        url = f"http://{bind_addr}:{self.base_http_port + self.node_id}"
+
+        time.sleep(2)
+        print(f"Node {self.node_id} started. URL: {url}")
+        return url
+
     def start(self, version: str = "latest", data_dir: Optional[str] = None) -> List[str]:
-        """Start the Titan cluster. Returns a list of node URLs.
+        """Start the Titan cluster (local mode — all nodes on this machine).
 
         Args:
             version: Which release version to use (default: "latest")
@@ -181,8 +248,8 @@ class TitanServer:
         urls = []
 
         for node_id in node_ids:
-            peers = ",".join(str(p) for p in node_ids if p != node_id)
-            cmd = [str(binary), "run", str(node_id), peers]
+            peers_arg = self._build_peer_arg(node_id, node_ids)
+            cmd = [str(binary), "run", str(node_id), peers_arg]
 
             print(f"Starting Node {node_id} (HTTP: :{self.base_http_port + node_id}, UDP: :{self.base_udp_port + node_id})...")
 
