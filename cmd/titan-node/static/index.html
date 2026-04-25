@@ -338,7 +338,7 @@
   <div class="hdr">
     <div class="hdr-left">
       <span class="hdr-name">Titan</span>
-      <span class="hdr-tag">v0.1 · distributed sqlite</span>
+      <span class="hdr-tag">v0.2.1 · distributed sqlite</span>
     </div>
     <div class="hdr-status">
       <div class="dot" id="dot"></div>
@@ -378,7 +378,11 @@
   </div>
 
   <script>
-    const P = [8001, 8002, 8003];
+    // Auto-detect host from current URL
+    const BASE = window.location.origin;
+    const HOST = window.location.hostname;
+    const BASE_HTTP = 8000;
+    const P = [BASE_HTTP + 1, BASE_HTTP + 2, BASE_HTTP + 3];
 
     function lg(m, c = '') {
       const el = document.getElementById('log');
@@ -389,7 +393,8 @@
 
     async function stat(p) {
       try {
-        const r = await fetch(`http://127.0.0.1:${p}/status`, {signal: AbortSignal.timeout(1500)});
+        const url = `${window.location.protocol}//${HOST}:${p}/status`;
+        const r = await fetch(url, {signal: AbortSignal.timeout(1500)});
         return await r.json();
       } catch { return null; }
     }
@@ -452,7 +457,8 @@
       lg(`→ leader :${lp}`, 'in');
 
       try {
-        const res = await fetch(`http://127.0.0.1:${lp}/execute`, {
+        const ldrUrl = `${window.location.protocol}//${HOST}:${lp}/execute`;
+        const res = await fetch(ldrUrl, {
           method: 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({sql}),
         });
