@@ -100,10 +100,12 @@ struct StatusResponse {
     last_applied: u64,
     log_length: usize,
     peers: Vec<u64>,
+    peer_addresses: HashMap<u64, String>,
     udp_port: u64,
     http_port: u64,
     persistent_state: bool,
     auth_enabled: bool,
+    mode: String,
 }
 
 // ── Main ──
@@ -718,6 +720,8 @@ async fn handle_status(
         Role::Candidate => "Candidate",
     };
 
+    let is_multi = shared.peer_addresses.values().any(|a| !a.starts_with("127.0.0.1"));
+
     Json(StatusResponse {
         node_id: shared.node_id,
         role: role_str.to_string(),
@@ -726,10 +730,12 @@ async fn handle_status(
         last_applied: node.last_applied,
         log_length: node.log.len(),
         peers: node.peers.iter().map(|p| p.0).collect(),
+        peer_addresses: shared.peer_addresses.clone(),
         udp_port: 5000 + shared.node_id,
         http_port: 8000 + shared.node_id,
         persistent_state: true,
         auth_enabled: shared.api_key.is_some(),
+        mode: if is_multi { "multi-server" } else { "local" }.to_string(),
     })
 }
 
