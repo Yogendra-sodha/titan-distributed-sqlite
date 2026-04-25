@@ -61,14 +61,39 @@ Titan will automatically generate a self-signed SSL Certificate on its first run
 
 ---
 
+## ⚡ Zero-Setup Quickstart (Recommended)
+
+No Rust, no compiling — just Python. The `titan-db` package includes a server manager that auto-downloads the pre-built binary.
+
+```bash
+pip install titan-db        # Install client + server manager
+titan-server start          # Downloads binary & starts a 3-node cluster
+```
+
+Then run your Python code:
+
+```python
+from titan_db import TitanClient
+
+db = TitanClient(["http://127.0.0.1:8001", "http://127.0.0.1:8002", "http://127.0.0.1:8003"])
+db.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+db.execute("INSERT INTO users (name) VALUES ('Alice')")
+print(db.query("SELECT * FROM users"))
+# [{'id': '1', 'name': 'Alice'}]
+```
+
+```bash
+titan-server status         # Check cluster health
+titan-server stop           # Stop all nodes
+```
+
+---
+
 ## 🐍 Python Client Library
 
-You can interact with your cluster directly from Python using the officially supported client.
-
 ### Installation
-The client is available directly from this GitHub repository.
 ```bash
-pip install git+https://github.com/Yogendra-sodha/titan-distributed-sqlite.git#subdirectory=clients/python
+pip install titan-db
 ```
 
 ### Usage
