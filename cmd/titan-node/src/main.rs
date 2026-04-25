@@ -30,6 +30,10 @@ struct SharedState {
     pending_confirms: Mutex<HashMap<u64, oneshot::Sender<WriteConfirmation>>>,
     /// API key for authentication (None = no auth required)
     api_key: Option<String>,
+    /// Peer network addresses: node_id → "ip:port" for UDP Raft messages
+    peer_addresses: HashMap<u64, String>,
+    /// The bind address for this node (default: 0.0.0.0)
+    bind_addr: String,
 }
 
 #[derive(Debug, Clone)]
@@ -121,11 +125,14 @@ fn main() -> Result<()> {
     }
     if args.len() >= 4 && args[1] == "run" {
         let node_id: u64 = args[2].parse()?;
-        let peers: Vec<RaftNodeId> = args[3]
-            .split(',')
-            .map(|s| RaftNodeId(s.parse().unwrap()))
-            .collect();
-        return run_server(node_id, peers);
+        let (peers, peer_addresses) = parse_peers(&args[3]);
+        // Optional --bind flag (default: 0.0.0.0)
+        let bind_addr = args.iter()
+            .position(|a| a == "--bind")
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+            .unwrap_or_else(|| "0.0.0.0".to_string());
+        return run_server(node_id, peers, peer_addresses, bind_addr);
     }
     if args.len() >= 4 && args[1] == "client" {
         let dest_port: u16 = args[2].parse()?;
@@ -134,18 +141,58 @@ fn main() -> Result<()> {
     }
 
     tracing::info!("titan-node bootstrapped");
-    tracing::info!("try: titan-node run <id> <peer_list>");
-    tracing::info!("try: titan-node client <leader_port> <sql_statement>");
+    tracing::info!("");
+    tracing::info!("Local mode (all nodes on one machine):");
+    tracing::info!("  titan-node run 1 2,3");
+    tracing::info!("  titan-node run 2 1,3");
+    tracing::info!("  titan-node run 3 1,2");
+    tracing::info!("");
+    tracing::info!("Multi-server mode (nodes on different machines):");
+    tracing::info!("  titan-node run 1 2@10.0.1.11:5002,3@10.0.1.12:5003");
+    tracing::info!("  titan-node run 2 1@10.0.1.10:5001,3@10.0.1.12:5003");
+    tracing::info!("  titan-node run 3 1@10.0.1.10:5001,2@10.0.1.11:5002");
     tracing::info!("");
     tracing::info!("HTTP API available when running:");
-    tracing::info!("  POST http://127.0.0.1:<8000+id>/execute  {{\"sql\": \"...\"}}");
-    tracing::info!("  GET  http://127.0.0.1:<8000+id>/query?sql=SELECT...");
-    tracing::info!("  GET  http://127.0.0.1:<8000+id>/status");
+    tracing::info!("  POST http://<host>:<8000+id>/execute  {{\"sql\": \"...\"}}");
+    tracing::info!("  GET  http://<host>:<8000+id>/query?sql=SELECT...");
+    tracing::info!("  GET  http://<host>:<8000+id>/status");
+    tracing::info!("");
+    tracing::info!("Options:");
+    tracing::info!("  --bind <addr>    Bind address (default: 0.0.0.0)");
+    tracing::info!("  TITAN_API_KEY    API key for authentication");
+    tracing::info!("  TITAN_TLS=1      Enable HTTPS with auto-generated cert");
 
     Ok(())
 }
 
-fn run_server(id: u64, peers: Vec<RaftNodeId>) -> Result<()> {
+/// Parse peer specifications. Supports two formats:
+///   - Simple:  "2,3"                          (uses 127.0.0.1:5000+id)
+///   - Address: "2@10.0.1.11:5002,3@10.0.1.12:5003"  (explicit ip:port)
+fn parse_peers(spec: &str) -> (Vec<RaftNodeId>, HashMap<u64, String>) {
+    let mut peers = Vec::new();
+    let mut addresses = HashMap::new();
+
+    for part in spec.split(',') {
+        let part = part.trim();
+        if part.is_empty() { continue; }
+
+        if let Some((id_str, addr)) = part.split_once('@') {
+            // Format: "2@10.0.1.11:5002"
+            let id: u64 = id_str.parse().expect("Invalid peer ID");
+            peers.push(RaftNodeId(id));
+            addresses.insert(id, addr.to_string());
+        } else {
+            // Format: "2" (defaults to 127.0.0.1:5000+id)
+            let id: u64 = part.parse().expect("Invalid peer ID");
+            peers.push(RaftNodeId(id));
+            addresses.insert(id, format!("127.0.0.1:{}", 5000 + id));
+        }
+    }
+
+    (peers, addresses)
+}
+
+fn run_server(id: u64, peers: Vec<RaftNodeId>, peer_addresses: HashMap<u64, String>, bind_addr: String) -> Result<()> {
     let http_port = 8000 + id;
     let udp_port = 5000 + id;
 
@@ -153,11 +200,18 @@ fn run_server(id: u64, peers: Vec<RaftNodeId>) -> Result<()> {
     let api_key = env::var("TITAN_API_KEY").ok();
     let auth_status = if api_key.is_some() { "ENABLED" } else { "DISABLED (set TITAN_API_KEY to enable)" };
 
+    let is_multi_server = peer_addresses.values().any(|a| !a.starts_with("127.0.0.1"));
+    let mode = if is_multi_server { "MULTI-SERVER" } else { "LOCAL" };
+
     tracing::info!("===================================");
     tracing::info!("🚀 Starting Titan Node {} ", id);
-    tracing::info!("📡 Peers: {:?}", peers.iter().map(|p| p.0).collect::<Vec<_>>());
-    tracing::info!("🌐 UDP Raft port: {}", udp_port);
-    tracing::info!("🌐 HTTP API port: {}", http_port);
+    tracing::info!("🌍 Mode: {}", mode);
+    tracing::info!("📡 Peers:");
+    for (pid, addr) in &peer_addresses {
+        tracing::info!("    Node {} → {}", pid, addr);
+    }
+    tracing::info!("🌐 UDP Raft: {}:{}", bind_addr, udp_port);
+    tracing::info!("🌐 HTTP API: {}:{}", bind_addr, http_port);
     tracing::info!("🔐 Auth: {}", auth_status);
     tracing::info!("===================================");
 
@@ -202,6 +256,8 @@ fn run_server(id: u64, peers: Vec<RaftNodeId>) -> Result<()> {
         node_id: id,
         pending_confirms: Mutex::new(HashMap::new()),
         api_key,
+        peer_addresses: peer_addresses.clone(),
+        bind_addr: bind_addr.clone(),
     });
 
     // ── Spawn the UDP Raft loop in a background thread ──
@@ -266,7 +322,7 @@ fn run_server(id: u64, peers: Vec<RaftNodeId>) -> Result<()> {
             .await
             .unwrap();
         } else {
-            let listener = TcpListener::bind(format!("0.0.0.0:{}", http_port))
+            let listener = TcpListener::bind(format!("{}:{}", bind_addr, http_port))
                 .await
                 .unwrap();
 
@@ -281,7 +337,9 @@ fn run_server(id: u64, peers: Vec<RaftNodeId>) -> Result<()> {
 // ── UDP Raft Loop (runs in background thread) ──
 
 fn run_raft_loop(id: u64, shared: Arc<SharedState>, recovered_last_applied: u64) {
-    let socket = UdpSocket::bind(format!("127.0.0.1:{}", 5000 + id)).unwrap();
+    let udp_bind = format!("{}:{}", shared.bind_addr, 5000 + id);
+    tracing::info!("📡 UDP Raft socket binding to {}", udp_bind);
+    let socket = UdpSocket::bind(&udp_bind).unwrap();
     socket.set_nonblocking(true).unwrap();
 
     let mut buf = [0; 65535];
@@ -333,9 +391,13 @@ fn run_raft_loop(id: u64, shared: Arc<SharedState>, recovered_last_applied: u64)
         {
             let mut node = shared.node.lock().unwrap();
             for out_msg in node.take_outbox() {
-                let dest_port = 5000 + out_msg.to.0;
+                // Look up the peer's real network address
+                let dest_addr = shared.peer_addresses
+                    .get(&out_msg.to.0)
+                    .cloned()
+                    .unwrap_or_else(|| format!("127.0.0.1:{}", 5000 + out_msg.to.0));
                 if let Ok(json) = serde_json::to_string(&out_msg) {
-                    let _ = socket.send_to(json.as_bytes(), format!("127.0.0.1:{}", dest_port));
+                    let _ = socket.send_to(json.as_bytes(), &dest_addr);
                 }
             }
         }
