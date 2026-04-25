@@ -207,10 +207,13 @@ class TitanServer:
         print(f"  UDP:  {bind_addr}:{self.base_udp_port + self.node_id}")
         print(f"  Peers: {peers_arg}")
 
+        log_file_path = work_dir / f"titan_node_{self.node_id}.log"
+        log_file = open(log_file_path, "w")
+
         proc = subprocess.Popen(
             cmd,
             cwd=str(work_dir),
-            stdout=subprocess.PIPE,
+            stdout=log_file,
             stderr=subprocess.STDOUT,
             creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0,
         )
@@ -253,10 +256,13 @@ class TitanServer:
 
             print(f"Starting Node {node_id} (HTTP: :{self.base_http_port + node_id}, UDP: :{self.base_udp_port + node_id})...")
 
+            log_file_path = work_dir / f"titan_node_{node_id}.log"
+            log_file = open(log_file_path, "w")
+
             proc = subprocess.Popen(
                 cmd,
                 cwd=str(work_dir),
-                stdout=subprocess.PIPE,
+                stdout=log_file,
                 stderr=subprocess.STDOUT,
                 creationflags=subprocess.CREATE_NO_WINDOW if platform.system() == "Windows" else 0,
             )
