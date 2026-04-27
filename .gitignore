@@ -2,3 +2,8 @@
 **/*.db
 .agent/
 data/
+*.log
+err.txt
+demo.py
+__pycache__/
+*.pyc
